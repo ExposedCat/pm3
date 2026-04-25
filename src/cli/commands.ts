@@ -1,13 +1,21 @@
+import type { RunCommandOptions } from "./command.ts";
 import { createCommand } from "./commands/create.ts";
 import { helpCommand } from "./commands/help.ts";
+import {
+  restartCommand,
+  startCommand,
+  stopCommand,
+} from "./commands/lifecycle.ts";
 import { listCommand } from "./commands/list.ts";
 import { viewCommand } from "./commands/view.ts";
 import { usageError } from "./errors.ts";
 import { formatHelpText } from "./help.ts";
-import type { RunCommandOptions } from "./command.ts";
 
 export const commandDefinitions = [
   createCommand,
+  startCommand,
+  stopCommand,
+  restartCommand,
   listCommand,
   viewCommand,
   helpCommand,
@@ -24,7 +32,7 @@ export function parseArgs(args: string[]): Command {
   }
 
   const definition = commandDefinitions.find((command) =>
-    command.names.includes(commandName)
+    command.names.includes(commandName),
   );
   if (!definition) {
     throw usageError(`Unknown command: ${commandName}`);

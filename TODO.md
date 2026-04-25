@@ -1,7 +1,10 @@
 - pm3 builds on `podman-compose`; compose runtime handles the rest.
-- Users configure normal compose dependency conditions such as `service_healthy` and `service_started`.
-- Users configure normal compose healthchecks; pm3 does not redefine healthcheck semantics.
-- pm3-specific config lives under `x-pm3` in compose files for hooks, timeouts, failure limits, and related settings.
+- Users configure normal compose dependency conditions such as `service_healthy`
+  and `service_started`.
+- Users configure normal compose healthchecks; pm3 does not redefine healthcheck
+  semantics.
+- pm3-specific config lives under `x-pm3` in compose files for hooks, timeouts,
+  failure limits, and related settings.
 - pm3 can kill the entire stack when a service is unhealthy or failed N times.
 - pm3 can run custom hooks and reporting for stack lifecycle and health events.
 - Project list is maintained in the DB.

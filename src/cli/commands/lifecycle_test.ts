@@ -1,0 +1,67 @@
+import { assertEquals } from "@std/assert";
+import { join, resolve } from "@std/path";
+import type { ProcessCommand, ProcessResult } from "../command.ts";
+import { runCli, runCliProcess, withTempCli } from "../test_utils.ts";
+import "../../database/database.ts";
+
+Deno.test({
+  name: "lifecycle commands run podman-compose in the project workdir",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const workdir = join(root, "api");
+      await Deno.mkdir(workdir);
+      await runCli(["create", workdir, "--name", "api"], databasePath);
+
+      const commands: ProcessCommand[] = [];
+      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
+        commands.push(command);
+        return Promise.resolve({ code: 0 });
+      };
+
+      await runCli(["start", "api"], databasePath, runProcess);
+      await runCli(["stop", "api"], databasePath, runProcess);
+      await runCli(["restart", "api"], databasePath, runProcess);
+
+      assertEquals(commands, [
+        {
+          command: "podman-compose",
+          args: ["up", "-d"],
+          cwd: resolve(workdir),
+        },
+        {
+          command: "podman-compose",
+          args: ["stop"],
+          cwd: resolve(workdir),
+        },
+        {
+          command: "podman-compose",
+          args: ["restart"],
+          cwd: resolve(workdir),
+        },
+      ]);
+    });
+  },
+});
+
+Deno.test({
+  name: "lifecycle process failures are internal command failures",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const workdir = join(root, "api");
+      await Deno.mkdir(workdir);
+      await runCli(["create", workdir, "--name", "api"], databasePath);
+
+      const output = await runCliProcess(
+        ["start", "api"],
+        databasePath,
+        () => Promise.resolve({ code: 1 }),
+      );
+
+      assertEquals(output.code, 1);
+      assertEquals(output.stdout, "");
+      assertEquals(output.stderr, "pm3: Command failed.");
+    });
+  },
+});

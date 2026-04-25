@@ -1,10 +1,8 @@
 {
 	"tasks": {
-		"build": "deno compile --allow-read --allow-write --allow-env --allow-ffi --output dist/pm3 src/cli/main.ts",
-		"check": "deno check src/**/*.ts",
-		"cli": "deno run --allow-read --allow-write --allow-env --allow-ffi src/cli/main.ts",
-		"fmt": "deno fmt",
-		"lint": "deno run --no-lock -A npm:@biomejs/biome@2.4.6 lint .",
+		"build": "deno compile --allow-read --allow-write --allow-env --allow-ffi --allow-run=podman-compose --output dist/pm3 src/cli/main.ts",
+		"cli": "deno run --allow-read --allow-write --allow-env --allow-ffi --allow-run=podman-compose src/cli/main.ts",
+		"check": "deno check src/**/*.ts; deno run --no-lock -A npm:@biomejs/biome@2.4.6 check src/ --write",
 		"test": "deno test --allow-read --allow-write --allow-env --allow-ffi --allow-run=deno",
 		"test:watch": "deno test --allow-read --allow-write --allow-env --allow-ffi --watch"
 	},

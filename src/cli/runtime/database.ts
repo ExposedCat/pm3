@@ -1,10 +1,10 @@
+import { join } from "@std/path";
 import {
   closeDatabase,
   createDatabase,
   type PM3Database,
 } from "../../database/database.ts";
 import type { RunCommandOptions } from "../command.ts";
-import { join } from "@std/path";
 
 const DATABASE_PATH_ENV = "PM3_DATABASE_PATH";
 const XDG_DATA_HOME_ENV = "XDG_DATA_HOME";
@@ -26,14 +26,17 @@ export async function withCliDatabase<T>(
 }
 
 function resolveCliDatabasePath(options: RunCommandOptions): string {
-  return options.databasePath ??
+  return (
+    options.databasePath ??
     getEnv(DATABASE_PATH_ENV) ??
-    join(resolveUserDataDir(), DATA_DIR_NAME, DATABASE_FILE_NAME);
+    join(resolveUserDataDir(), DATA_DIR_NAME, DATABASE_FILE_NAME)
+  );
 }
 
 function resolveUserDataDir(): string {
-  return getEnv(XDG_DATA_HOME_ENV) ??
-    join(requireEnv(HOME_ENV), ".local", "share");
+  return (
+    getEnv(XDG_DATA_HOME_ENV) ?? join(requireEnv(HOME_ENV), ".local", "share")
+  );
 }
 
 function requireEnv(name: string): string {
