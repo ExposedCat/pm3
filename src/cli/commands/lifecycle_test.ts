@@ -65,3 +65,80 @@ Deno.test({
     });
   },
 });
+
+Deno.test({
+  name: "start and restart can rebuild project containers",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const workdir = join(root, "api");
+      await Deno.mkdir(workdir);
+      await runCli(["create", workdir, "--name", "api"], databasePath);
+
+      const commands: ProcessCommand[] = [];
+      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
+        commands.push(command);
+        return Promise.resolve({ code: 0 });
+      };
+
+      await runCli(["start", "api", "--build"], databasePath, runProcess);
+      await runCli(["restart", "-b", "api"], databasePath, runProcess);
+
+      assertEquals(commands, [
+        {
+          command: "podman-compose",
+          args: ["build"],
+          cwd: resolve(workdir),
+        },
+        {
+          command: "podman-compose",
+          args: ["up", "-d", "--force-recreate"],
+          cwd: resolve(workdir),
+        },
+        {
+          command: "podman-compose",
+          args: ["build"],
+          cwd: resolve(workdir),
+        },
+        {
+          command: "podman-compose",
+          args: ["up", "-d", "--force-recreate"],
+          cwd: resolve(workdir),
+        },
+      ]);
+    });
+  },
+});
+
+Deno.test({
+  name: "no-cache rebuilds without using the build cache",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const workdir = join(root, "api");
+      await Deno.mkdir(workdir);
+      await runCli(["create", workdir, "--name", "api"], databasePath);
+
+      const commands: ProcessCommand[] = [];
+      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
+        commands.push(command);
+        return Promise.resolve({ code: 0 });
+      };
+
+      await runCli(["start", "-c", "api"], databasePath, runProcess);
+
+      assertEquals(commands, [
+        {
+          command: "podman-compose",
+          args: ["build", "--no-cache"],
+          cwd: resolve(workdir),
+        },
+        {
+          command: "podman-compose",
+          args: ["up", "-d", "--force-recreate"],
+          cwd: resolve(workdir),
+        },
+      ]);
+    });
+  },
+});

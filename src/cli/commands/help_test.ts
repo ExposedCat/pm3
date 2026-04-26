@@ -32,6 +32,8 @@ Deno.test("help rejects extra arguments", () => {
 Deno.test("help text is generated from command metadata", () => {
   const output = formatHelpText(commandDefinitions);
 
+  assertEquals(output.includes("\nCommands:\n"), false);
+
   for (const command of commandDefinitions) {
     const usage = [
       command.names[0],

@@ -3,18 +3,21 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../command.ts";
-import { inputError } from "../errors.ts";
-import { requireArgument, requireNoExtraArgs } from "../utils.ts";
+import { inputError, usageError } from "../errors.ts";
+import { requireArgument } from "../utils.ts";
 
 type LifecycleCommandKind = "start" | "stop" | "restart";
 
 type LifecycleCommand = CliCommand<LifecycleCommandKind> & {
   name: string;
+  build: boolean;
+  noCache: boolean;
 };
 
 export const startCommand = createLifecycleCommand({
   kind: "start",
   args: ["up", "-d"],
+  supportsBuild: true,
   description: "Start one project.",
 });
 
@@ -27,12 +30,14 @@ export const stopCommand = createLifecycleCommand({
 export const restartCommand = createLifecycleCommand({
   kind: "restart",
   args: ["restart"],
+  supportsBuild: true,
   description: "Restart one project.",
 });
 
 type LifecycleCommandConfig = {
   kind: LifecycleCommandKind;
   args: readonly string[];
+  supportsBuild?: boolean;
   description: string;
 };
 
@@ -42,7 +47,7 @@ function createLifecycleCommand(
   return {
     names: [config.kind],
     args: ["NAME"],
-    options: [],
+    options: config.supportsBuild ? ["[-b|--build]", "[-c|--no-cache]"] : [],
     description: config.description,
     parse: (args) => parseLifecycleArgs(config, args),
   };
@@ -52,19 +57,67 @@ function parseLifecycleArgs(
   config: LifecycleCommandConfig,
   args: string[],
 ): LifecycleCommand {
-  const [nameArg, ...extra] = args;
-  const name = requireArgument("project name", nameArg);
-  requireNoExtraArgs(config.kind, extra);
+  let name: string | undefined;
+  let build = false;
+  let noCache = false;
+
+  for (const arg of args) {
+    if (arg === "-b" || arg === "--build") {
+      assertLifecycleBuildOption(config, arg);
+      build = true;
+      continue;
+    }
+
+    if (arg === "-c" || arg === "--no-cache") {
+      assertLifecycleBuildOption(config, arg);
+      build = true;
+      noCache = true;
+      continue;
+    }
+
+    if (arg.startsWith("-")) {
+      throw usageError(`Unknown option for ${config.kind}: ${arg}`);
+    }
+
+    if (name) {
+      throw usageError(`Unexpected argument for ${config.kind}: ${arg}`);
+    }
+
+    name = arg;
+  }
+
+  const parsedName = requireArgument("project name", name);
 
   return {
     kind: config.kind,
-    name,
-    run: (options) => runLifecycleCommand(name, config.args, options),
+    name: parsedName,
+    build,
+    noCache,
+    run: (options) =>
+      runLifecycleCommand(
+        { name: parsedName, build, noCache },
+        config.args,
+        options,
+      ),
   };
 }
 
+function assertLifecycleBuildOption(
+  config: LifecycleCommandConfig,
+  option: string,
+): void {
+  if (!config.supportsBuild) {
+    throw usageError(`Unknown option for ${config.kind}: ${option}`);
+  }
+}
+
+type LifecycleRunCommand = Pick<
+  LifecycleCommand,
+  "build" | "name" | "noCache"
+>;
+
 async function runLifecycleCommand(
-  name: string,
+  command: LifecycleRunCommand,
   args: readonly string[],
   options: RunCommandOptions,
 ): Promise<void> {
@@ -73,11 +126,21 @@ async function runLifecycleCommand(
   const { runProjectCompose } = await import("../runtime/compose.ts");
 
   await withCliDatabase(options, async (db) => {
-    const project = await getProjectByName(db, name);
+    const project = await getProjectByName(db, command.name);
     if (!project) {
-      throw inputError(`Project not found: ${name}`);
+      throw inputError(`Project not found: ${command.name}`);
     }
 
-    await runProjectCompose(project, args, options);
+    if (!command.build) {
+      await runProjectCompose(project, args, options);
+      return;
+    }
+
+    await runProjectCompose(
+      project,
+      ["build", ...(command.noCache ? ["--no-cache"] : [])],
+      options,
+    );
+    await runProjectCompose(project, ["up", "-d", "--force-recreate"], options);
   });
 }
