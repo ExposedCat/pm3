@@ -45,7 +45,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "lifecycle process failures are internal command failures",
+  name: "lifecycle process failures print compose errors",
   sanitizeResources: false,
   async fn() {
     await withTempCli(async ({ databasePath, root }) => {
@@ -59,7 +59,54 @@ Deno.test({
 
       assertEquals(output.code, 1);
       assertEquals(output.stdout, "");
-      assertEquals(output.stderr, "Command failed");
+      assertEquals(output.stderr, "podman-compose failed");
+    });
+  },
+});
+
+Deno.test({
+  name: "lifecycle commands print pm3 progress and warning totals",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const workdir = join(root, "api");
+      await Deno.mkdir(workdir);
+      await runCli(["create", workdir, "--name", "api"], databasePath);
+
+      const output = await runCli(["start", "api"], databasePath, () =>
+        Promise.resolve({ code: 0, stderr: "WARN: image uses latest tag" }),
+      );
+
+      assertEquals(output, "Finished with 1 warnings");
+    });
+  },
+});
+
+Deno.test({
+  name: "verbose lifecycle commands pass through to podman-compose execution",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const workdir = join(root, "api");
+      await Deno.mkdir(workdir);
+      await runCli(["create", workdir, "--name", "api"], databasePath);
+
+      const commands: ProcessCommand[] = [];
+      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
+        commands.push(command);
+        return Promise.resolve({ code: 0 });
+      };
+
+      await runCli(["start", "api", "--verbose"], databasePath, runProcess);
+
+      assertEquals(commands, [
+        {
+          command: "podman-compose",
+          args: ["up", "-d"],
+          cwd: resolve(workdir),
+          verbose: true,
+        },
+      ]);
     });
   },
 });

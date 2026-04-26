@@ -131,7 +131,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "remove keeps the project when podman cleanup fails",
+  name: "remove keeps the project and prints compose errors when podman cleanup fails",
   sanitizeResources: false,
   async fn() {
     await withTempCli(async ({ databasePath, root }) => {
@@ -152,7 +152,7 @@ Deno.test({
 
       assertEquals(output.code, 1);
       assertEquals(output.stdout, "");
-      assertEquals(output.stderr, "Command failed");
+      assertEquals(output.stderr, "podman-compose failed");
       assertEquals(
         await runCli(["view", "api"], databasePath),
         ["name: api", "id: 1", `workdir: ${resolve(workdir)}`].join("\n"),

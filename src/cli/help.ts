@@ -15,7 +15,10 @@ export function formatHelpText(commands: readonly CommandDefinition[]): string {
 }
 
 function formatCommandUsage(command: CommandDefinition): string {
-  return [command.names[0], ...command.args, ...(command.options ?? [])].join(
-    " ",
-  );
+  return [
+    command.names[0],
+    ...command.args,
+    "[-v|--verbose]",
+    ...(command.options ?? []),
+  ].join(" ");
 }

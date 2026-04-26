@@ -4,8 +4,8 @@ Container spinning made simple
 
 ## Requirements
 
-`pm3` operates on top of `podman-compose`. Make sure to install it whichever
-way.
+`pm3` operates on top of `podman` and `podman-compose`. Make sure to install it
+whichever way.
 
 ## Commands
 

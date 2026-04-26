@@ -3,6 +3,11 @@ services:
     build:
       context: ./built
       dockerfile: Containerfile
+    depends_on:
+      prebuilt:
+        condition: service_started
+      delayed-health:
+        condition: service_healthy
     ports:
       - "3101:3000"
 

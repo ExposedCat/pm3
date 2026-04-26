@@ -36,6 +36,7 @@ Deno.test("help text is generated from command metadata", () => {
     const usage = [
       command.names[0],
       ...command.args,
+      "[-v|--verbose]",
       ...(command.options ?? []),
     ].join(" ");
 
