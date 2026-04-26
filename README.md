@@ -13,10 +13,10 @@ way.
 pm3 create WORKDIR [--name NAME]        # teach pm3 about a compose project
 pm3 start NAME [-b|--build]             # podman-compose up -d
 pm3 start NAME [-c|--no-cache]          # rebuild from scratch, then start
-pm3 stop NAME                           # stop one project
+pm3 stop NAME                           # stop the project
 pm3 restart NAME [-b|--build]           # restart, optionally rebuilding first
 pm3 list [-d|--detailed]                # show the fleet
-pm3 view NAME                           # inspect one project
+pm3 view NAME                           # inspect the project
 pm3 rm NAME [-f|--force]                # remove it and its Podman artifacts
 ```
 

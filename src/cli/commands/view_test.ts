@@ -4,7 +4,7 @@ import { runCli, withTempCli } from "../test_utils.ts";
 import "../../database/database.ts";
 
 Deno.test({
-  name: "view prints one project by name",
+  name: "view prints the project by name",
   sanitizeResources: false,
   async fn() {
     await withTempCli(async ({ databasePath, root }) => {

@@ -15,7 +15,7 @@ export const removeCommand = {
   names: ["rm", "remove"],
   args: ["NAME"],
   options: ["[-f|--force]"],
-  description: "Remove one project and its Podman artifacts.",
+  description: "Remove the project and its Podman artifacts",
   parse: parseRemoveArgs,
 } satisfies CommandDefinition<RemoveCommand>;
 

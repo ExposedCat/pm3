@@ -18,20 +18,20 @@ export const startCommand = createLifecycleCommand({
   kind: "start",
   args: ["up", "-d"],
   supportsBuild: true,
-  description: "Start one project.",
+  description: "Start the project",
 });
 
 export const stopCommand = createLifecycleCommand({
   kind: "stop",
   args: ["stop"],
-  description: "Stop one project.",
+  description: "Stop the project",
 });
 
 export const restartCommand = createLifecycleCommand({
   kind: "restart",
   args: ["restart"],
   supportsBuild: true,
-  description: "Restart one project.",
+  description: "Restart the project",
 });
 
 type LifecycleCommandConfig = {

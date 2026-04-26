@@ -17,7 +17,7 @@ export const createCommand = {
   names: ["create"],
   args: ["WORKDIR"],
   options: ["[--name NAME]"],
-  description: "Create a project. NAME defaults to the workdir base name.",
+  description: "Register project for supervision",
   parse: parseCreateArgs,
 } satisfies CommandDefinition<CreateCommand>;
 

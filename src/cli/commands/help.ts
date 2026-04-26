@@ -7,7 +7,7 @@ export const helpCommand = {
   names: ["help", "--help", "-h"],
   args: [],
   options: [],
-  description: "Show this help.",
+  description: "Show this help",
   parse: parseHelpArgs,
 } satisfies CommandDefinition<HelpCommand>;
 

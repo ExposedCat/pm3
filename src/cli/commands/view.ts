@@ -15,7 +15,7 @@ export const viewCommand = {
   names: ["view"],
   args: ["NAME"],
   options: [],
-  description: "Show one project by name.",
+  description: "Show the project",
   parse: parseViewArgs,
 } satisfies CommandDefinition<ViewCommand>;
 
