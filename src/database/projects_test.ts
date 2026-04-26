@@ -3,6 +3,7 @@ import { join } from "@std/path";
 import { closeDatabase, createDatabase } from "./database.ts";
 import {
   addProject,
+  deleteProject,
   getProjectByName,
   getProjectDetails,
   listProjects,
@@ -24,6 +25,10 @@ Deno.test("projects can be added, listed, and loaded", async () => {
     assertEquals(await getProjectDetails(db, project.id), project);
     assertEquals(await getProjectByName(db, "api"), project);
     assertEquals(await getProjectByName(db, "missing"), undefined);
+
+    await deleteProject(db, project.id);
+    assertEquals(await listProjects(db), []);
+    assertEquals(await getProjectDetails(db, project.id), undefined);
   } finally {
     await closeDatabase(db);
     await Deno.remove(dir, { recursive: true });

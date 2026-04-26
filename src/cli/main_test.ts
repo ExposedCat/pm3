@@ -10,13 +10,7 @@ Deno.test({
 
     assertEquals(output.code, 1);
     assertEquals(output.stdout, "");
-    assertEquals(
-      output.stderr,
-      [
-        "pm3: Unknown command: missing-command",
-        "Run `pm3 help` for usage.",
-      ].join("\n"),
-    );
+    assertEquals(output.stderr, "Unknown command: missing-command");
   },
 });
 
@@ -27,10 +21,7 @@ Deno.test({
 
     assertEquals(output.code, 1);
     assertEquals(output.stdout, "");
-    assertEquals(
-      output.stderr,
-      ["pm3: Missing workdir.", "Run `pm3 help` for usage."].join("\n"),
-    );
+    assertEquals(output.stderr, "Missing workdir.");
   },
 });
 
@@ -42,12 +33,7 @@ Deno.test({
 
       assertEquals(output.code, 1);
       assertEquals(output.stdout, "");
-      assertEquals(
-        output.stderr,
-        ["pm3: Project not found: ghost", "Run `pm3 help` for usage."].join(
-          "\n",
-        ),
-      );
+      assertEquals(output.stderr, "Project not found: ghost");
     });
   },
 });
@@ -66,7 +52,7 @@ Deno.test({
 
       assertEquals(output.code, 1);
       assertEquals(output.stdout, "");
-      assertEquals(output.stderr, "pm3: Command failed.");
+      assertEquals(output.stderr, "Command failed");
     });
   },
 });

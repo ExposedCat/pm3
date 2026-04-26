@@ -6,11 +6,8 @@ export async function runCliMain(args: readonly string[]): Promise<number> {
     await runCommand(parseArgs([...args]));
     return 0;
   } catch (error) {
-    const { message, showUsage } = formatCliError(error);
-    console.error(`pm3: ${message}`);
-    if (showUsage) {
-      console.error("Run `pm3 help` for usage.");
-    }
+    const { message } = formatCliError(error);
+    console.error(message);
     return 1;
   }
 }

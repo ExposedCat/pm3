@@ -11,7 +11,7 @@ export function formatHelpText(commands: readonly CommandDefinition[]): string {
       )}  ${command.description}`,
   );
 
-  return ["pm3", "", "Usage:", ...usageLines, ""].join("\n");
+  return ["pm3 = pm2 + podman", "", "Usage:", ...usageLines, ""].join("\n");
 }
 
 function formatCommandUsage(command: CommandDefinition): string {

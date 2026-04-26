@@ -63,3 +63,10 @@ export async function addProject(
 
   return project;
 }
+
+export async function deleteProject(
+  db: PM3Database,
+  id: number,
+): Promise<void> {
+  await db.deleteFrom("projects").where("id", "=", id).execute();
+}

@@ -26,19 +26,16 @@ function isCliError(error: unknown): error is CliError {
 
 export type CliErrorOutput = {
   message: string;
-  showUsage: boolean;
 };
 
 export function formatCliError(error: unknown): CliErrorOutput {
   if (isCliError(error)) {
     return {
       message: error.message,
-      showUsage: true,
     };
   }
 
   return {
-    message: "Command failed.",
-    showUsage: false,
+    message: "Command failed",
   };
 }

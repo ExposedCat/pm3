@@ -7,6 +7,7 @@ import {
   stopCommand,
 } from "./commands/lifecycle.ts";
 import { listCommand } from "./commands/list.ts";
+import { removeCommand } from "./commands/remove.ts";
 import { viewCommand } from "./commands/view.ts";
 import { usageError } from "./errors.ts";
 import { formatHelpText } from "./help.ts";
@@ -18,6 +19,7 @@ export const commandDefinitions = [
   restartCommand,
   listCommand,
   viewCommand,
+  removeCommand,
   helpCommand,
 ] as const;
 

@@ -59,7 +59,7 @@ Deno.test({
 
       assertEquals(output.code, 1);
       assertEquals(output.stdout, "");
-      assertEquals(output.stderr, "pm3: Command failed.");
+      assertEquals(output.stderr, "Command failed");
     });
   },
 });

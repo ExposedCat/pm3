@@ -29,6 +29,21 @@ export async function runProjectCompose(
   }
 }
 
+export async function removeProjectComposeArtifacts(
+  project: Project,
+  options: RunCommandOptions,
+): Promise<void> {
+  if (!(await hasComposeFile(project.workingDir))) {
+    return;
+  }
+
+  await runProjectCompose(
+    project,
+    ["down", "--volumes", "--rmi", "all", "--remove-orphans"],
+    options,
+  );
+}
+
 export type ProjectComposeContainer = {
   state: string;
   status: string;
