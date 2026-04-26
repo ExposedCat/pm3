@@ -19,9 +19,7 @@ Deno.test({
 
       assertEquals(
         output,
-        ["name: worker", "id: 2", `workdir: ${resolve(workerDir)}`].join(
-          "\n",
-        ),
+        ["name: worker", "id: 2", `workdir: ${resolve(workerDir)}`].join("\n"),
       );
     });
   },

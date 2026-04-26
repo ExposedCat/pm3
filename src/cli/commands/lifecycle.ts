@@ -111,10 +111,7 @@ function assertLifecycleBuildOption(
   }
 }
 
-type LifecycleRunCommand = Pick<
-  LifecycleCommand,
-  "build" | "name" | "noCache"
->;
+type LifecycleRunCommand = Pick<LifecycleCommand, "build" | "name" | "noCache">;
 
 async function runLifecycleCommand(
   command: LifecycleRunCommand,

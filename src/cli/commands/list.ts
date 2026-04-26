@@ -3,35 +3,246 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../command.ts";
+import { formatTable } from "../output/table.ts";
 import { requireNoExtraArgs } from "../utils.ts";
 
-export type ListCommand = CliCommand<"list">;
+export type ListCommand = CliCommand<"list"> & {
+  detailed: boolean;
+};
 
 export const listCommand = {
   names: ["list"],
   args: [],
-  options: [],
+  options: ["[-d|--detailed]"],
   description: "List projects.",
   parse: parseListArgs,
 } satisfies CommandDefinition<ListCommand>;
 
 function parseListArgs(args: string[]): ListCommand {
-  requireNoExtraArgs("list", args);
+  const rest: string[] = [];
+  let detailed = false;
+
+  for (const arg of args) {
+    if (arg === "-d" || arg === "--detailed") {
+      detailed = true;
+    } else {
+      rest.push(arg);
+    }
+  }
+
+  requireNoExtraArgs("list", rest);
 
   return {
     kind: "list",
-    run: runListCommand,
+    detailed,
+    run: (options) => runListCommand(options, { detailed }),
   };
 }
 
-async function runListCommand(options: RunCommandOptions): Promise<void> {
+type ListOptions = {
+  detailed: boolean;
+};
+
+type ProjectListRow = {
+  name: string;
+  state: string;
+  created: string;
+  ports: string;
+};
+
+async function runListCommand(
+  options: RunCommandOptions,
+  listOptions: ListOptions,
+): Promise<void> {
   const { listProjects } = await import("../../database/projects.ts");
+  const { listProjectComposeContainers } = await import(
+    "../runtime/compose.ts"
+  );
   const { withCliDatabase } = await import("../runtime/database.ts");
 
   await withCliDatabase(options, async (db) => {
     const projects = await listProjects(db);
+    const rows: ProjectListRow[] = [];
+
     for (const project of projects) {
-      console.log(`${project.name}\t${project.id}`);
+      const containers = await listProjectComposeContainers(project, options);
+      rows.push({
+        name: project.name,
+        ...formatProjectState(containers, listOptions),
+      });
     }
+
+    printRows(rows, listOptions);
   });
+}
+
+function formatProjectState(
+  containers: readonly {
+    state: string;
+    status: string;
+    createdAt: number;
+    startedAt: number;
+    exitedAt: number;
+    ports: string;
+  }[],
+  options: ListOptions,
+): Omit<ProjectListRow, "name"> {
+  const state = getProjectState(containers);
+  const duration = options.detailed
+    ? getProjectStateDuration(containers, state)
+    : "";
+
+  return {
+    state: duration ? `${state} (${duration})` : state,
+    created: getProjectCreatedTime(containers),
+    ports: uniqueJoined(containers.map((container) => container.ports)),
+  };
+}
+
+function getProjectState(
+  containers: readonly { state: string }[],
+): "down" | "pending" | "up" {
+  if (containers.length === 0) {
+    return "down";
+  }
+
+  const states = containers.map((container) => container.state.toLowerCase());
+  if (states.every((state) => state === "running")) {
+    return "up";
+  }
+
+  if (states.every((state) => state === "exited" || state === "stopped")) {
+    return "down";
+  }
+
+  return "pending";
+}
+
+function getProjectStateDuration(
+  containers: readonly {
+    status: string;
+    startedAt: number;
+    exitedAt: number;
+  }[],
+  state: "down" | "pending" | "up",
+): string {
+  const timestamps = containers
+    .map((container) =>
+      state === "up" ? container.startedAt : container.exitedAt,
+    )
+    .filter(Boolean);
+
+  if (timestamps.length > 0) {
+    return formatRelativeTimestamp(Math.min(...timestamps));
+  }
+
+  return compactDuration(
+    parseStatusDuration(containers[0]?.status ?? "", state),
+  );
+}
+
+function parseStatusDuration(status: string, state: string): string {
+  if (state === "up") {
+    return status.match(/^Up\s+(.+?)(?:\s+\(|$)/)?.[1] ?? "";
+  }
+
+  if (state === "down") {
+    return status.match(/^Exited\s+\([^)]+\)\s+(.+?)(?:\s+\(|$)/)?.[1] ?? "";
+  }
+
+  return "";
+}
+
+function getProjectCreatedTime(
+  containers: readonly { createdAt: number; status: string }[],
+): string {
+  const timestamps = containers
+    .map((container) => container.createdAt)
+    .filter(Boolean);
+
+  if (timestamps.length > 0) {
+    return formatRelativeTimestamp(Math.min(...timestamps));
+  }
+
+  return compactDuration(parseCreatedDuration(containers[0]?.status ?? ""));
+}
+
+function parseCreatedDuration(status: string): string {
+  return status.match(/\b(\d+\s+\w+\s+ago)\b/)?.[1] ?? "";
+}
+
+function formatRelativeTimestamp(timestampSeconds: number): string {
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor(Date.now() / 1000) - timestampSeconds,
+  );
+
+  return formatDuration(elapsedSeconds);
+}
+
+function formatDuration(totalSeconds: number): string {
+  const units = [
+    { suffix: "d", seconds: 60 * 60 * 24 },
+    { suffix: "h", seconds: 60 * 60 },
+    { suffix: "m", seconds: 60 },
+  ] as const;
+  const parts: string[] = [];
+  let remaining = totalSeconds;
+
+  for (const unit of units) {
+    const value = Math.floor(remaining / unit.seconds);
+    if (value > 0) {
+      parts.push(`${value}${unit.suffix}`);
+      remaining -= value * unit.seconds;
+    }
+
+    if (parts.length === 2) {
+      break;
+    }
+  }
+
+  return parts.join(" ") || "<1m";
+}
+
+function compactDuration(duration: string): string {
+  const match = duration.match(
+    /(?:(\d+)\s+days?)?\s*(?:(\d+)\s+hours?)?\s*(?:(\d+)\s+minutes?)?/,
+  );
+  if (!match) {
+    return duration.replace(/\s+ago$/, "");
+  }
+
+  const [, days, hours, minutes] = match;
+  const totalSeconds =
+    Number(days ?? 0) * 24 * 60 * 60 +
+    Number(hours ?? 0) * 60 * 60 +
+    Number(minutes ?? 0) * 60;
+
+  return totalSeconds > 0 ? formatDuration(totalSeconds) : duration;
+}
+
+function uniqueJoined(values: readonly string[]): string {
+  return [...new Set(values.filter(Boolean))].join("; ");
+}
+
+function printRows(
+  rows: readonly ProjectListRow[],
+  options: ListOptions,
+): void {
+  if (options.detailed) {
+    console.log(
+      formatTable([
+        ["NAME", "STATE", "CREATED", "PORTS"],
+        ...rows.map((row) => [row.name, row.state, row.created, row.ports]),
+      ]),
+    );
+    return;
+  }
+
+  console.log(
+    formatTable([
+      ["NAME", "STATE"],
+      ...rows.map((row) => [row.name, row.state]),
+    ]),
+  );
 }

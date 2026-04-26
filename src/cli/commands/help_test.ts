@@ -14,13 +14,11 @@ Deno.test("help prints usage", async () => {
 });
 
 Deno.test("help rejects extra arguments", () => {
-  for (
-    const args of [
-      ["help", "extra"],
-      ["--help", "extra"],
-      ["-h", "extra"],
-    ]
-  ) {
+  for (const args of [
+    ["help", "extra"],
+    ["--help", "extra"],
+    ["-h", "extra"],
+  ]) {
     assertThrows(
       () => parseArgs(args),
       Error,

@@ -92,7 +92,7 @@ Deno.test({
       );
       assertEquals(listOutput.code, 0);
       assertEquals(listOutput.stderr, "");
-      assertEquals(listOutput.stdout, "api\t1");
+      assertEquals(listOutput.stdout, ["NAME  STATE", "api   down"].join("\n"));
     });
   },
 });
@@ -127,7 +127,7 @@ Deno.test({
             createOutput,
             ["name: api", "id: 1", `workdir: ${resolve(workdir)}`].join("\n"),
           );
-          assertEquals(listOutput, "api\t1");
+          assertEquals(listOutput, ["NAME  STATE", "api   down"].join("\n"));
         },
       );
       await Deno.stat(join(xdgDataHome, "pm3", "pm3.sqlite"));
@@ -160,7 +160,7 @@ Deno.test({
             createOutput,
             ["name: api", "id: 1", `workdir: ${resolve(workdir)}`].join("\n"),
           );
-          assertEquals(listOutput, "api\t1");
+          assertEquals(listOutput, ["NAME  STATE", "api   down"].join("\n"));
         },
       );
       await Deno.stat(join(home, ".local", "share", "pm3", "pm3.sqlite"));

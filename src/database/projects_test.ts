@@ -18,7 +18,9 @@ Deno.test("projects can be added, listed, and loaded", async () => {
       workingDir: "/tmp/api",
     });
 
-    assertEquals(await listProjects(db), [{ id: project.id, name: "api" }]);
+    assertEquals(await listProjects(db), [
+      { id: project.id, name: "api", workingDir: project.workingDir },
+    ]);
     assertEquals(await getProjectDetails(db, project.id), project);
     assertEquals(await getProjectByName(db, "api"), project);
     assertEquals(await getProjectByName(db, "missing"), undefined);

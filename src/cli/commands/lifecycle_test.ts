@@ -53,10 +53,8 @@ Deno.test({
       await Deno.mkdir(workdir);
       await runCli(["create", workdir, "--name", "api"], databasePath);
 
-      const output = await runCliProcess(
-        ["start", "api"],
-        databasePath,
-        () => Promise.resolve({ code: 1 }),
+      const output = await runCliProcess(["start", "api"], databasePath, () =>
+        Promise.resolve({ code: 1 }),
       );
 
       assertEquals(output.code, 1);

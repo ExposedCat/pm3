@@ -8,14 +8,14 @@ export type ProjectTable = {
 };
 
 export type Project = Selectable<ProjectTable>;
-export type ProjectListItem = Pick<Project, "id" | "name">;
+export type ProjectListItem = Pick<Project, "id" | "name" | "workingDir">;
 
 export async function listProjects(
   db: PM3Database,
 ): Promise<ProjectListItem[]> {
   return await db
     .selectFrom("projects")
-    .select(["id", "name"])
+    .select(["id", "name", "workingDir"])
     .orderBy("name", "asc")
     .execute();
 }

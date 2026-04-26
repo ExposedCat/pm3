@@ -6,18 +6,12 @@ export function formatHelpText(commands: readonly CommandDefinition[]): string {
   );
   const usageLines = commands.map(
     (command) =>
-      `  pm3 ${
-        formatCommandUsage(command).padEnd(commandUsageLength)
-      }  ${command.description}`,
+      `  pm3 ${formatCommandUsage(command).padEnd(
+        commandUsageLength,
+      )}  ${command.description}`,
   );
 
-  return [
-    "pm3",
-    "",
-    "Usage:",
-    ...usageLines,
-    "",
-  ].join("\n");
+  return ["pm3", "", "Usage:", ...usageLines, ""].join("\n");
 }
 
 function formatCommandUsage(command: CommandDefinition): string {

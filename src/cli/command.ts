@@ -7,10 +7,13 @@ export type ProcessCommand = {
   command: string;
   args: readonly string[];
   cwd: string;
+  captureOutput?: boolean;
 };
 
 export type ProcessResult = {
   code: number;
+  stdout?: string;
+  stderr?: string;
 };
 
 export type RunProcess = (command: ProcessCommand) => Promise<ProcessResult>;
