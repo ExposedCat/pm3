@@ -1,9 +1,10 @@
 Name:           pm3
 Version:        1.0.0
 Release:        1%{?dist}
-Summary:        Podman-based container project manager
+Summary:        Container project manager
 
-License:        LicenseRef-Unknown
+License:        GPL-3.0-only
+URL:            https://github.com/ExposedCat/pm3
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  deno
@@ -16,8 +17,7 @@ Requires:       podman-compose
 %{!?_unitdir:%global _unitdir %{_prefix}/lib/systemd/system}
 
 %description
-pm3 is a Deno-based CLI container orchestrator built on top of Podman and
-podman-compose.
+pm3 is a Deno-based CLI for managing container compose projects.
 
 %prep
 %autosetup -n %{name}-%{version}
@@ -25,6 +25,9 @@ podman-compose.
 %build
 mkdir -p dist
 deno task build
+
+%check
+deno task test
 
 %install
 install -Dm0755 dist/pm3 %{buildroot}%{_bindir}/pm3
@@ -40,6 +43,7 @@ install -Dm0644 packaging/systemd/pm3.service %{buildroot}%{_unitdir}/pm3.servic
 %systemd_postun_with_restart pm3.service
 
 %files
+%license LICENSE.md
 %doc README.md TODO.md
 %{_bindir}/pm3
 %{_unitdir}/pm3.service

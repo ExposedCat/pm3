@@ -43,7 +43,7 @@ await run("tar", [
   `pm3-${version}`,
 ]);
 
-const spec = await Deno.readTextFile("packaging/rpm/pm3.spec");
+const spec = await Deno.readTextFile("pm3.spec");
 await Deno.writeTextFile(
   join(rpmRoot, "SPECS", "pm3.spec"),
   spec.replace(/^Version:\s+.*/m, `Version:        ${version}`),
