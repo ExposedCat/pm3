@@ -1,24 +1,23 @@
-# pm3
+<h1 align="center">
+  PM3 = PM2 + PodMan<br>
+  <img style="width:512px" src="./assets/preview.png" alt="Screenshot">
+</h1>
 
-Container spinning made simple
+<div align="center">
+
+<a href="https://coff.ee/exposedcat" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
+
+[![](https://img.shields.io/badge/me%20on-Telegram-informational?style=for-the-badge&logo=telegram&logoColor=26A5E4&color=26A5E4)](https://t.me/ExposedCatDev)
+[![](https://img.shields.io/badge/me%20on-Reddit-informational?style=for-the-badge&logo=reddit&logoColor=FF5700&color=FF5700)](https://www.reddit.com/user/ExposedCatDev)
+
+</div>
+
+<br>
 
 ## Requirements
 
 `pm3` operates on top of `podman` and `podman-compose`. Make sure to install it
 whichever way.
-
-## Commands
-
-```sh
-pm3 create WORKDIR [--name NAME]        # teach pm3 about a compose project
-pm3 start NAME [-b|--build]             # podman-compose up -d
-pm3 start NAME [-c|--no-cache]          # rebuild from scratch, then start
-pm3 stop NAME                           # stop the project
-pm3 restart NAME [-b|--build]           # restart, optionally rebuilding first
-pm3 list [-d|--detailed]                # show the fleet
-pm3 view NAME                           # inspect the project
-pm3 rm NAME [-f|--force]                # remove it and its Podman artifacts
-```
 
 ## Examples
 
@@ -28,10 +27,10 @@ Create a project from a compose directory:
 pm3 create ./apps/web --name website
 ```
 
-Start it, then admire the table:
+Enable startup and start it right now, then admire the table:
 
 ```sh
-pm3 start website
+pm3 enable website --now
 pm3 list --detailed
 ```
 
