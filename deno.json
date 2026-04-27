@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tasks": {
     "build": "deno compile --allow-read --allow-write --allow-env --allow-ffi --allow-run=podman-compose,podman --output dist/pm3 src/cli/main.ts",
     "cli": "deno run --allow-read --allow-write --allow-env --allow-ffi --allow-run=podman-compose,podman src/cli/main.ts",
