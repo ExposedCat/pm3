@@ -31,7 +31,7 @@ deno task test
 
 %install
 install -Dm0755 dist/pm3 %{buildroot}%{_bindir}/pm3
-install -Dm0644 packaging/systemd/pm3.service %{buildroot}%{_unitdir}/pm3.service
+install -Dm0644 packaging/pm3.service %{buildroot}%{_unitdir}/pm3.service
 
 %post
 %systemd_post pm3.service

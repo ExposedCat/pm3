@@ -6,10 +6,7 @@ const releaseDir = "dist/release";
 await Deno.mkdir(releaseDir, { recursive: true });
 await Deno.copyFile("dist/pm3", join(releaseDir, "pm3-linux-x86_64"));
 await Deno.chmod(join(releaseDir, "pm3-linux-x86_64"), 0o755);
-await Deno.copyFile(
-  "packaging/systemd/pm3.service",
-  join(releaseDir, "pm3.service"),
-);
+await Deno.copyFile("packaging/pm3.service", join(releaseDir, "pm3.service"));
 
 const checksums = await createChecksums(releaseDir);
 await Deno.writeTextFile(
