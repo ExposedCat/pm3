@@ -4,6 +4,7 @@ import { closeDatabase, createDatabase } from "./database.ts";
 import {
   addProject,
   deleteProject,
+  disableProject,
   enableProject,
   getProjectByName,
   getProjectDetails,
@@ -47,6 +48,14 @@ Deno.test("projects can be added, listed, and loaded", async () => {
         enabled: 1,
       },
     ]);
+
+    await disableProject(db, project.id);
+    await disableProject(db, project.id);
+    assertEquals(await getProjectDetails(db, project.id), {
+      ...project,
+      enabled: 0,
+    });
+    assertEquals(await listEnabledProjects(db), []);
 
     await deleteProject(db, project.id);
     assertEquals(await listProjects(db), []);

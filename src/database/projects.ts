@@ -94,3 +94,14 @@ export async function enableProject(
     .where("id", "=", id)
     .execute();
 }
+
+export async function disableProject(
+  db: PM3Database,
+  id: number,
+): Promise<void> {
+  await db
+    .updateTable("projects")
+    .set({ enabled: 0 })
+    .where("id", "=", id)
+    .execute();
+}

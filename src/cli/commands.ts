@@ -1,5 +1,6 @@
 import { createCommand } from "./commands/create.ts";
 import { daemonCommand } from "./commands/daemon.ts";
+import { disableCommand } from "./commands/disable.ts";
 import { enableCommand } from "./commands/enable.ts";
 import { helpCommand } from "./commands/help.ts";
 import {
@@ -17,6 +18,7 @@ import type { RunLineStream, RunProcess } from "./runtime/process.ts";
 export const commandDefinitions = [
   createCommand,
   enableCommand,
+  disableCommand,
   startCommand,
   stopCommand,
   restartCommand,
