@@ -44,6 +44,7 @@ await run("tar", [
 ]);
 await Deno.copyFile("dist/pm3", join(rpmRoot, "SOURCES", "pm3-linux-x86_64"));
 await Deno.chmod(join(rpmRoot, "SOURCES", "pm3-linux-x86_64"), 0o755);
+await Deno.copyFile("packaging/pm3.service", join(rpmRoot, "SOURCES", "pm3.service"));
 
 const spec = await Deno.readTextFile("pm3.spec");
 await Deno.writeTextFile(
