@@ -9,7 +9,7 @@
     "release:detect-version": "deno run --allow-read --allow-write --allow-env --allow-run=git scripts/detect-version-change.ts",
     "release:build-rpm": "deno run --allow-read --allow-write --allow-env --allow-run=tar,rpmbuild scripts/build-rpm.ts",
     "release:assets": "deno run --allow-read --allow-write --allow-env scripts/prepare-release-assets.ts",
-    "release:create": "deno run --allow-env --allow-run=gh scripts/create-release.ts"
+    "release:create": "deno run --allow-env --allow-run=gh --allow-read --allow-net scripts/create-release.ts"
   },
   "imports": {
     "@db/sqlite": "jsr:@db/sqlite@^0.13.0",
