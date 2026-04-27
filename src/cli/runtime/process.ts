@@ -11,12 +11,17 @@ export async function runSystemProcess(
   const process = new Deno.Command(command.command, {
     args: [...command.args],
     cwd: command.cwd,
-    stdin: "inherit",
-    stdout: "piped",
-    stderr: "piped",
+    stdin: command.detached ? "null" : "inherit",
+    stdout: command.detached ? "null" : "piped",
+    stderr: command.detached ? "null" : "piped",
   });
 
   const child = process.spawn();
+  if (command.detached) {
+    child.unref();
+    return { code: 0 };
+  }
+
   const [status, stdout, stderr] = await Promise.all([
     child.status,
     collectOutput(
@@ -72,7 +77,7 @@ function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {
   return output;
 }
 
-export async function runSystemLineStream(
+export function runSystemLineStream(
   command: LineStreamCommand,
   onLine: (line: string) => void,
 ): Promise<LineStream> {
@@ -91,7 +96,7 @@ export async function runSystemLineStream(
   const stdout = readLines(child.stdout, onLine);
   const stderr = drainStream(child.stderr);
 
-  return {
+  return Promise.resolve({
     async stop() {
       if (!exited) {
         try {
@@ -112,7 +117,7 @@ export async function runSystemLineStream(
         await Promise.race([settled, delay(1_000)]);
       }
     },
-  };
+  });
 }
 
 async function settlesWithin(
@@ -124,7 +129,7 @@ async function settlesWithin(
 
 function delay(milliseconds: number): Promise<false> {
   return new Promise((resolve) =>
-    setTimeout(() => resolve(false), milliseconds),
+    setTimeout(() => resolve(false), milliseconds)
   );
 }
 

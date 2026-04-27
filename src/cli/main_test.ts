@@ -74,11 +74,15 @@ Deno.test({
       assertEquals(createOutput.stderr, "");
       assertEquals(
         createOutput.stdout,
-        ["name: api", "id: 1", `workdir: ${resolve(workdir)}`].join("\n"),
+        [`Created api at ${resolve(workdir)}`, "Start with `pm3 start api`"]
+          .join("\n"),
       );
       assertEquals(listOutput.code, 0);
       assertEquals(listOutput.stderr, "");
-      assertEquals(listOutput.stdout, ["NAME  STATE", "api   down"].join("\n"));
+      assertEquals(
+        listOutput.stdout,
+        ["NAME  STATE", "api   \x1b[31mdown\x1b[0m"].join("\n"),
+      );
     });
   },
 });
@@ -111,9 +115,13 @@ Deno.test({
 
           assertEquals(
             createOutput,
-            ["name: api", "id: 1", `workdir: ${resolve(workdir)}`].join("\n"),
+            [`Created api at ${resolve(workdir)}`, "Start with `pm3 start api`"]
+              .join("\n"),
           );
-          assertEquals(listOutput, ["NAME  STATE", "api   down"].join("\n"));
+          assertEquals(
+            listOutput,
+            ["NAME  STATE", "api   \x1b[31mdown\x1b[0m"].join("\n"),
+          );
         },
       );
       await Deno.stat(join(xdgDataHome, "pm3", "pm3.sqlite"));
@@ -144,9 +152,13 @@ Deno.test({
 
           assertEquals(
             createOutput,
-            ["name: api", "id: 1", `workdir: ${resolve(workdir)}`].join("\n"),
+            [`Created api at ${resolve(workdir)}`, "Start with `pm3 start api`"]
+              .join("\n"),
           );
-          assertEquals(listOutput, ["NAME  STATE", "api   down"].join("\n"));
+          assertEquals(
+            listOutput,
+            ["NAME  STATE", "api   \x1b[31mdown\x1b[0m"].join("\n"),
+          );
         },
       );
       await Deno.stat(join(home, ".local", "share", "pm3", "pm3.sqlite"));

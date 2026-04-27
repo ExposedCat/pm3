@@ -8,22 +8,29 @@ import { requireArgument } from "../utils.ts";
 
 export type RemoveCommand = CliCommand<"remove"> & {
   name: string;
+  detach: boolean;
   force: boolean;
 };
 
 export const removeCommand = {
   names: ["rm", "remove"],
   args: ["NAME"],
-  options: ["[-f|--force]"],
+  options: ["[-d|--detach]", "[-f|--force]"],
   description: "Remove the project and its Podman artifacts",
   parse: parseRemoveArgs,
 } satisfies CommandDefinition<RemoveCommand>;
 
 function parseRemoveArgs(args: string[]): RemoveCommand {
   let name: string | undefined;
+  let detach = false;
   let force = false;
 
   for (const arg of args) {
+    if (arg === "-d" || arg === "--detach") {
+      detach = true;
+      continue;
+    }
+
     if (arg === "-f" || arg === "--force") {
       force = true;
       continue;
@@ -45,12 +52,14 @@ function parseRemoveArgs(args: string[]): RemoveCommand {
   return {
     kind: "remove",
     name: parsedName,
+    detach,
     force,
-    run: (options) => runRemoveCommand({ name: parsedName, force }, options),
+    run: (options) =>
+      runRemoveCommand({ name: parsedName, detach, force }, options),
   };
 }
 
-type RemoveRunCommand = Pick<RemoveCommand, "force" | "name">;
+type RemoveRunCommand = Pick<RemoveCommand, "detach" | "force" | "name">;
 
 async function runRemoveCommand(
   command: RemoveRunCommand,
@@ -76,7 +85,9 @@ async function runRemoveCommand(
       );
     }
 
-    await removeProjectComposeArtifacts(project, options);
+    await removeProjectComposeArtifacts(project, options, {
+      detached: command.detach,
+    });
     await deleteProject(db, project.id);
   });
 }

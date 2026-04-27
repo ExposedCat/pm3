@@ -18,7 +18,8 @@ Deno.test({
 
       assertEquals(
         output,
-        ["name: api", "id: 1", `workdir: ${resolve(workdir)}`].join("\n"),
+        [`Created api at ${resolve(workdir)}`, "Start with `pm3 start api`"]
+          .join("\n"),
       );
     });
   },
@@ -36,7 +37,10 @@ Deno.test({
 
       assertEquals(
         output,
-        ["name: worker", "id: 1", `workdir: ${resolve(workdir)}`].join("\n"),
+        [
+          `Created worker at ${resolve(workdir)}`,
+          "Start with `pm3 start worker`",
+        ].join("\n"),
       );
     });
   },

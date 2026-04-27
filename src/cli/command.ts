@@ -10,6 +10,7 @@ export type ProcessCommand = {
   args: readonly string[];
   cwd: string;
   captureOutput?: boolean;
+  detached?: boolean;
   onOutput?: (chunk: ProcessOutputChunk) => void;
   verbose?: boolean;
 };

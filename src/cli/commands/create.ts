@@ -5,7 +5,6 @@ import type {
   RunCommandOptions,
 } from "../command.ts";
 import { usageError } from "../errors.ts";
-import { printProject } from "../output/project.ts";
 import { requireArgument, requireOptionValue } from "../utils.ts";
 
 export type CreateCommand = CliCommand<"create"> & {
@@ -71,7 +70,8 @@ async function runCreateCommand(
   await withCliDatabase(options, async (db) => {
     const workingDir = resolve(command.workdir);
     const name = command.name ?? basename(workingDir);
-    const project = await addProject(db, { name, workingDir });
-    printProject(project);
+    await addProject(db, { name, workingDir });
+    console.log(`Created ${name} at ${workingDir}`);
+    console.log(`Start with \`pm3 start ${name}\``);
   });
 }

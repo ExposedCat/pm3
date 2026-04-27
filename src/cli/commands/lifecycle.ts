@@ -11,6 +11,7 @@ type LifecycleCommandKind = "start" | "stop" | "restart";
 type LifecycleCommand = CliCommand<LifecycleCommandKind> & {
   name: string;
   build: boolean;
+  detach: boolean;
   noCache: boolean;
 };
 
@@ -47,7 +48,10 @@ function createLifecycleCommand(
   return {
     names: [config.kind],
     args: ["NAME"],
-    options: config.supportsBuild ? ["[-b|--build]", "[-c|--no-cache]"] : [],
+    options: [
+      "[-d|--detach]",
+      ...(config.supportsBuild ? ["[-b|--build]", "[-c|--no-cache]"] : []),
+    ],
     description: config.description,
     parse: (args) => parseLifecycleArgs(config, args),
   };
@@ -59,9 +63,15 @@ function parseLifecycleArgs(
 ): LifecycleCommand {
   let name: string | undefined;
   let build = false;
+  let detach = false;
   let noCache = false;
 
   for (const arg of args) {
+    if (arg === "-d" || arg === "--detach") {
+      detach = true;
+      continue;
+    }
+
     if (arg === "-b" || arg === "--build") {
       assertLifecycleBuildOption(config, arg);
       build = true;
@@ -92,10 +102,11 @@ function parseLifecycleArgs(
     kind: config.kind,
     name: parsedName,
     build,
+    detach,
     noCache,
     run: (options) =>
       runLifecycleCommand(
-        { name: parsedName, build, noCache },
+        { name: parsedName, build, detach, noCache },
         config.args,
         options,
       ),
@@ -111,7 +122,10 @@ function assertLifecycleBuildOption(
   }
 }
 
-type LifecycleRunCommand = Pick<LifecycleCommand, "build" | "name" | "noCache">;
+type LifecycleRunCommand = Pick<
+  LifecycleCommand,
+  "build" | "detach" | "name" | "noCache"
+>;
 
 async function runLifecycleCommand(
   command: LifecycleRunCommand,
@@ -129,7 +143,9 @@ async function runLifecycleCommand(
     }
 
     if (!command.build) {
-      await runProjectCompose(project, args, options);
+      await runProjectCompose(project, args, options, {
+        detached: command.detach,
+      });
       return;
     }
 
@@ -137,7 +153,15 @@ async function runLifecycleCommand(
       project,
       ["build", ...(command.noCache ? ["--no-cache"] : [])],
       options,
+      { detached: command.detach },
     );
-    await runProjectCompose(project, ["up", "-d", "--force-recreate"], options);
+    await runProjectCompose(
+      project,
+      ["up", "-d", "--force-recreate"],
+      options,
+      {
+        detached: command.detach,
+      },
+    );
   });
 }

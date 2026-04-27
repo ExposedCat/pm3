@@ -53,8 +53,10 @@ Deno.test({
       await Deno.mkdir(workdir);
       await runCli(["create", workdir, "--name", "api"], databasePath);
 
-      const output = await runCliProcess(["start", "api"], databasePath, () =>
-        Promise.resolve({ code: 1 }),
+      const output = await runCliProcess(
+        ["start", "api"],
+        databasePath,
+        () => Promise.resolve({ code: 1 }),
       );
 
       assertEquals(output.code, 1);
@@ -73,8 +75,11 @@ Deno.test({
       await Deno.mkdir(workdir);
       await runCli(["create", workdir, "--name", "api"], databasePath);
 
-      const output = await runCli(["start", "api"], databasePath, () =>
-        Promise.resolve({ code: 0, stderr: "WARN: image uses latest tag" }),
+      const output = await runCli(
+        ["start", "api"],
+        databasePath,
+        () =>
+          Promise.resolve({ code: 0, stderr: "WARN: image uses latest tag" }),
       );
 
       assertEquals(output, "Finished with 1 warnings");
@@ -105,6 +110,43 @@ Deno.test({
           args: ["up", "-d"],
           cwd: resolve(workdir),
           verbose: true,
+        },
+      ]);
+    });
+  },
+});
+
+Deno.test({
+  name: "detached lifecycle commands run compose silently in the background",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const workdir = join(root, "api");
+      await Deno.mkdir(workdir);
+      await runCli(["create", workdir, "--name", "api"], databasePath);
+
+      const commands: ProcessCommand[] = [];
+      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
+        commands.push(command);
+        return Promise.resolve({
+          code: 0,
+          stderr: "WARN: image uses latest tag",
+        });
+      };
+
+      const output = await runCli(
+        ["start", "--detach", "api"],
+        databasePath,
+        runProcess,
+      );
+
+      assertEquals(output, "");
+      assertEquals(commands, [
+        {
+          command: "podman-compose",
+          args: ["up", "-d"],
+          cwd: resolve(workdir),
+          detached: true,
         },
       ]);
     });

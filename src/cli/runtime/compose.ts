@@ -17,23 +17,30 @@ export async function runProjectCompose(
   project: Project,
   args: readonly string[],
   options: RunCommandOptions,
+  runOptions: ProjectComposeRunOptions = {},
 ): Promise<void> {
   const { runSystemProcess } = await import("./process.ts");
   const runProcess = options.runProcess ?? runSystemProcess;
   const operation = getComposeOperation(args);
   const loader = startLoader(`${operation} ${project.name}`, {
-    enabled: !options.verbose,
+    enabled: !options.verbose && !runOptions.detached,
   });
-  const progress = await startComposeProgress(project, operation, options, {
-    finishLine: loader.finishLine,
-    startLine: loader.startLine,
-  });
+  const progress = runOptions.detached
+    ? createEmptyComposeProgress()
+    : await startComposeProgress(project, operation, options, {
+      finishLine: loader.finishLine,
+      writeLineAfter: loader.writeLineAfter,
+      startLine: loader.startLine,
+    });
 
   const command: ProcessCommand = {
     command: PODMAN_COMPOSE_COMMAND,
     args: progress.captureComposeCommands ? ["--verbose", ...args] : args,
     cwd: project.workingDir,
   };
+  if (runOptions.detached) {
+    command.detached = true;
+  }
   if (progress.captureComposeCommands) {
     command.onOutput = ({ text }) => progress.writeComposeOutput(text);
   }
@@ -54,8 +61,12 @@ export async function runProjectCompose(
     throw inputError(formatComposeFailure(result));
   }
 
+  if (runOptions.detached) {
+    return;
+  }
+
   const warnings = countWarnings(result);
-  if (warnings > 0) {
+  if (warnings > progress.shownNoticeCount()) {
     console.log(`Finished with ${warnings} warnings`);
   }
 }
@@ -63,6 +74,7 @@ export async function runProjectCompose(
 export async function removeProjectComposeArtifacts(
   project: Project,
   options: RunCommandOptions,
+  runOptions: ProjectComposeRunOptions = {},
 ): Promise<void> {
   if (!(await hasComposeFile(project.workingDir))) {
     return;
@@ -72,8 +84,13 @@ export async function removeProjectComposeArtifacts(
     project,
     ["down", "--volumes", "--rmi", "all", "--remove-orphans"],
     options,
+    runOptions,
   );
 }
+
+export type ProjectComposeRunOptions = {
+  detached?: boolean;
+};
 
 export type ProjectComposeContainer = {
   service: string;
@@ -135,9 +152,19 @@ type ComposeOperation = ReturnType<typeof getComposeOperation>;
 
 type ComposeProgress = {
   captureComposeCommands: boolean;
+  shownNoticeCount(): number;
   stop(): Promise<void>;
   writeComposeOutput(text: string): void;
 };
+
+function createEmptyComposeProgress(): ComposeProgress {
+  return {
+    captureComposeCommands: false,
+    shownNoticeCount: () => 0,
+    stop: () => Promise.resolve(),
+    writeComposeOutput: () => {},
+  };
+}
 
 async function startComposeProgress(
   project: Project,
@@ -145,18 +172,24 @@ async function startComposeProgress(
   options: RunCommandOptions,
   output: ComposeOutput,
 ): Promise<ComposeProgress> {
-  if (options.runProcess || operation === "Building") {
+  if (
+    operation === "Building" || (options.runProcess && !options.runLineStream)
+  ) {
     return {
       captureComposeCommands: false,
+      shownNoticeCount: () => 0,
       stop: () => Promise.resolve(),
       writeComposeOutput: () => {},
     };
   }
 
-  const services = await listComposeServices(project);
+  const { runSystemProcess } = await import("./process.ts");
+  const runProcess = options.runProcess ?? runSystemProcess;
+  const services = await listComposeServices(project, runProcess);
   if (services.length === 0) {
     return {
       captureComposeCommands: false,
+      shownNoticeCount: () => 0,
       stop: () => Promise.resolve(),
       writeComposeOutput: () => {},
     };
@@ -205,9 +238,12 @@ async function startComposeProgress(
     },
   );
   let composeOutput = "";
+  let shownNoticeCount = 0;
+  let lastCommandService = "";
 
   return {
     captureComposeCommands: !options.verbose,
+    shownNoticeCount: () => shownNoticeCount,
     async stop() {
       await delay(EVENT_STREAM_STOP_GRACE_MS);
       await stream.stop();
@@ -224,6 +260,7 @@ async function startComposeProgress(
       for (const line of lines) {
         const service = getComposeCommandService(operation, services, line);
         if (service) {
+          lastCommandService = service;
           startComposeServiceProgress(
             project.name,
             operation,
@@ -233,18 +270,48 @@ async function startComposeProgress(
             output,
           );
         }
+
+        const noticeService = getComposeNoticeService(services, line) ||
+          lastCommandService;
+        if (noticeService && isComposeNoticeLine(line)) {
+          const parentLine = formatComposeProgressLine(
+            project.name,
+            finished.has(noticeService)
+              ? getFinishedComposeOperation(operation)
+              : operation,
+            services,
+            noticeService,
+          );
+          startComposeServiceProgress(
+            project.name,
+            operation,
+            services,
+            started,
+            noticeService,
+            output,
+          );
+          output.writeLineAfter(
+            parentLine,
+            formatComposeNoticeLine(line),
+          );
+          shownNoticeCount += 1;
+        }
       }
     },
   };
 }
 
-async function listComposeServices(project: Project): Promise<string[]> {
+async function listComposeServices(
+  project: Project,
+  runProcess: (
+    command: ProcessCommand,
+  ) => Promise<{ code: number; stdout?: string }>,
+): Promise<string[]> {
   if (!(await hasComposeFile(project.workingDir))) {
     return [];
   }
 
-  const { runSystemProcess } = await import("./process.ts");
-  const result = await runSystemProcess({
+  const result = await runProcess({
     command: PODMAN_COMPOSE_COMMAND,
     args: ["config", "--services"],
     cwd: project.workingDir,
@@ -278,8 +345,8 @@ type PodmanEvent = {
 function getComposeEventService(event: PodmanEvent | undefined): string {
   return (
     event?.Attributes?.["io.podman.compose.service"] ??
-    event?.Attributes?.["com.docker.compose.service"] ??
-    ""
+      event?.Attributes?.["com.docker.compose.service"] ??
+      ""
   );
 }
 
@@ -370,22 +437,94 @@ function finishComposeProgress(
     services,
     service,
   );
+  const finishedLine = formatComposeProgressLine(
+    projectName,
+    getFinishedComposeOperation(operation),
+    services,
+    service,
+  );
   if (!started.has(service)) {
     started.add(service);
     output.startLine(line);
   }
 
   finished.add(service);
-  output.finishLine(line);
+  output.finishLine(line, finishedLine);
 }
 
 function formatComposeProgressLine(
   projectName: string,
-  operation: ComposeOperation,
+  operation: string,
   _services: readonly string[],
   service: string,
 ): string {
   return `${operation} ${projectName}/${service}`;
+}
+
+function getFinishedComposeOperation(operation: ComposeOperation): string {
+  if (operation === "Starting") {
+    return "Started";
+  }
+
+  if (operation === "Stopping") {
+    return "Stopped";
+  }
+
+  if (operation === "Restarting") {
+    return "Restarted";
+  }
+
+  if (operation === "Removing") {
+    return "Removed";
+  }
+
+  return operation;
+}
+
+function getComposeNoticeService(
+  services: readonly string[],
+  line: string,
+): string {
+  return services.find((service) => line.includes(`_${service}_`)) ?? "";
+}
+
+function isComposeNoticeLine(line: string): boolean {
+  return /\b(?:err(?:or)?|warn(?:ing)?)\b/i.test(line);
+}
+
+function formatComposeNoticeLine(line: string): string {
+  return `\x1b[33m${formatComposeNoticeText(line)}\x1b[0m`;
+}
+
+function formatComposeNoticeText(line: string): string {
+  return parsePodmanLogMessage(line) ?? line.trim();
+}
+
+function parsePodmanLogMessage(line: string): string | undefined {
+  if (!/\blevel=warn(?:ing)?\b/i.test(line)) {
+    return undefined;
+  }
+
+  const match = /\bmsg="((?:\\.|[^"\\])*)"/.exec(line);
+  return match ? unescapeLogfmtQuotedValue(match[1]) : undefined;
+}
+
+function unescapeLogfmtQuotedValue(value: string): string {
+  return value.replace(/\\(["\\nrt])/g, (_match, escaped: string) => {
+    if (escaped === "n") {
+      return "\n";
+    }
+
+    if (escaped === "r") {
+      return "\r";
+    }
+
+    if (escaped === "t") {
+      return "\t";
+    }
+
+    return escaped;
+  });
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -393,57 +532,63 @@ function delay(milliseconds: number): Promise<void> {
 }
 
 type Loader = {
-  finishLine(line: string): void;
+  finishLine(line: string, finishedLine: string): void;
   startLine(line: string): void;
   stop(): void;
+  writeLineAfter(parentLine: string, line: string): void;
 };
 
 function startLoader(label: string, options: { enabled: boolean }): Loader {
   if (!options.enabled || !isTerminal(Deno.stdout)) {
     return {
-      finishLine: () => {},
+      finishLine: (_line, finishedLine) => console.log(finishedLine),
       startLine: (line) => console.log(line),
       stop: () => {},
+      writeLineAfter: (_parentLine, line) => console.log(`    ${line}`),
     };
   }
 
   let index = 0;
-  let renderedLineCount = 0;
+  let renderedRowCount = 0;
   const lines: { active: boolean; label: string }[] = [];
   const encoder = new TextEncoder();
   const render = () => {
     const frame = LOADER_FRAMES[index % LOADER_FRAMES.length];
     const output: string[] = [];
 
-    if (renderedLineCount > 0) {
-      output.push(`\x1b[${renderedLineCount}A`);
+    if (renderedRowCount > 0) {
+      output.push(`\x1b[${renderedRowCount}A\r\x1b[J`);
     }
 
-    const renderedLines =
-      lines.length > 0
-        ? lines.map((line) =>
-            line.active ? `${frame} ${line.label}...` : `  ${line.label}`,
-          )
-        : [`${frame} ${label}...`];
+    const renderedLines = lines.length > 0
+      ? lines.map((line) =>
+        line.active ? `${frame} ${line.label}...` : `  ${line.label}`
+      )
+      : [`${frame} ${label}...`];
 
     for (const line of renderedLines) {
       output.push(`\r\x1b[K${line}\n`);
     }
 
     Deno.stdout.writeSync(encoder.encode(output.join("")));
-    renderedLineCount = renderedLines.length;
+    renderedRowCount = countRenderedRows(renderedLines, getTerminalColumns());
   };
   const timer = setInterval(() => {
+    if (lines.length > 0 && !lines.some((line) => line.active)) {
+      return;
+    }
+
     index += 1;
     render();
   }, 100);
   render();
 
   return {
-    finishLine(label: string) {
+    finishLine(label: string, finishedLabel = label) {
       const line = lines.find((entry) => entry.label === label);
       if (line) {
         line.active = false;
+        line.label = finishedLabel;
         render();
       }
     },
@@ -457,7 +602,7 @@ function startLoader(label: string, options: { enabled: boolean }): Loader {
       clearInterval(timer);
       if (lines.length === 0) {
         Deno.stdout.writeSync(
-          encoder.encode(`\x1b[${renderedLineCount}A\r\x1b[K`),
+          encoder.encode(`\x1b[${renderedRowCount}A\r\x1b[J`),
         );
         return;
       }
@@ -467,12 +612,48 @@ function startLoader(label: string, options: { enabled: boolean }): Loader {
       }
       render();
     },
+    writeLineAfter(parentLine: string, label: string) {
+      if (lines.some((line) => line.label === label)) {
+        return;
+      }
+
+      const parentIndex = lines.findIndex((line) => line.label === parentLine);
+      const insertIndex = parentIndex === -1 ? lines.length : parentIndex + 1;
+      lines.splice(insertIndex, 0, { active: false, label: `  ${label}` });
+      render();
+    },
   };
 }
 
+function getTerminalColumns(): number {
+  try {
+    return Math.max(1, Deno.consoleSize().columns);
+  } catch {
+    return 80;
+  }
+}
+
+function countRenderedRows(lines: readonly string[], columns: number): number {
+  return lines.reduce(
+    (total, line) =>
+      total + stripAnsi(line).split(/\r?\n/).reduce(
+        (lineTotal, segment) =>
+          lineTotal + Math.max(1, Math.ceil(segment.length / columns)),
+        0,
+      ),
+    0,
+  );
+}
+
+function stripAnsi(value: string): string {
+  const escape = String.fromCharCode(27);
+  return value.replace(new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, "g"), "");
+}
+
 type ComposeOutput = {
-  finishLine(line: string): void;
+  finishLine(line: string, finishedLine: string): void;
   startLine(line: string): void;
+  writeLineAfter(parentLine: string, line: string): void;
 };
 
 type TerminalWriter = {
@@ -549,8 +730,8 @@ function parseComposeContainerJson(output: string): ProjectComposeContainer[] {
 function getComposeContainerService(container: PodmanComposeContainer): string {
   return (
     container.Labels?.["io.podman.compose.service"] ??
-    container.Labels?.["com.docker.compose.service"] ??
-    ""
+      container.Labels?.["com.docker.compose.service"] ??
+      ""
   );
 }
 

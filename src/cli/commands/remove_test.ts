@@ -131,7 +131,57 @@ Deno.test({
 });
 
 Deno.test({
-  name: "remove keeps the project and prints compose errors when podman cleanup fails",
+  name:
+    "detached remove cleans artifacts silently in the background and deletes the project",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const workdir = join(root, "api");
+      await Deno.mkdir(workdir);
+      await Deno.writeTextFile(join(workdir, "compose.yaml"), "services: {}\n");
+      await runCli(["create", workdir, "--name", "api"], databasePath);
+
+      const commands: ProcessCommand[] = [];
+      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
+        commands.push(command);
+        return Promise.resolve({
+          code: 0,
+          stdout: command.captureOutput
+            ? JSON.stringify([{ State: "exited" }])
+            : undefined,
+          stderr: command.detached ? "WARN: removing volumes" : undefined,
+        });
+      };
+
+      const output = await runCli(
+        ["rm", "-d", "api"],
+        databasePath,
+        runProcess,
+      );
+
+      assertEquals(output, "");
+      assertEquals(await runCli(["list"], databasePath), "NAME  STATE");
+      assertEquals(commands, [
+        {
+          command: "podman-compose",
+          args: ["ps", "--format", "json"],
+          cwd: resolve(workdir),
+          captureOutput: true,
+        },
+        {
+          command: "podman-compose",
+          args: ["down", "--volumes", "--rmi", "all", "--remove-orphans"],
+          cwd: resolve(workdir),
+          detached: true,
+        },
+      ]);
+    });
+  },
+});
+
+Deno.test({
+  name:
+    "remove keeps the project and prints compose errors when podman cleanup fails",
   sanitizeResources: false,
   async fn() {
     await withTempCli(async ({ databasePath, root }) => {
