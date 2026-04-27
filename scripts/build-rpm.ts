@@ -55,12 +55,6 @@ await Deno.writeTextFile(
 await run("rpmbuild", [
   "--define",
   `_topdir ${rpmRoot}`,
-  "--define",
-  "systemd_post() %{nil}",
-  "--define",
-  "systemd_preun() %{nil}",
-  "--define",
-  "systemd_postun_with_restart() %{nil}",
   "--nodeps",
   "-bb",
   join(rpmRoot, "SPECS", "pm3.spec"),

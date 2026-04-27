@@ -17,7 +17,7 @@ ExclusiveArch:  x86_64
 
 %global debug_package %{nil}
 %global __strip /bin/true
-%{!?_unitdir:%global _unitdir %{_prefix}/lib/systemd/system}
+%{!?_userunitdir:%global _userunitdir %{_prefix}/lib/systemd/user}
 
 %description
 pm3 is a Deno-based CLI for managing container compose projects.
@@ -33,22 +33,22 @@ pm3 is a Deno-based CLI for managing container compose projects.
 
 %install
 install -Dm0755 %{SOURCE1} %{buildroot}%{_bindir}/pm3
-install -Dm0644 %{SOURCE2} %{buildroot}%{_unitdir}/pm3.service
+install -Dm0644 %{SOURCE2} %{buildroot}%{_userunitdir}/pm3.service
 
 %post
-%systemd_post pm3.service
+%systemd_user_post pm3.service
 
 %preun
-%systemd_preun pm3.service
+%systemd_user_preun pm3.service
 
 %postun
-%systemd_postun_with_restart pm3.service
+%systemd_user_postun_with_restart pm3.service
 
 %files
 %license LICENSE.md
 %doc README.md TODO.md
 %{_bindir}/pm3
-%{_unitdir}/pm3.service
+%{_userunitdir}/pm3.service
 
 %changelog
 * Mon Apr 27 2026 Artem Prokop <artem13.prokop@gmail.com> 1.1.1-2
