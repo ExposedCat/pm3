@@ -1,5 +1,5 @@
 Name:           pm3
-Version:        0.0.1
+Version:        1.0.0
 Release:        1%{?dist}
 Summary:        Podman-based container project manager
 
@@ -45,5 +45,5 @@ install -Dm0644 packaging/systemd/pm3.service %{buildroot}%{_unitdir}/pm3.servic
 %{_unitdir}/pm3.service
 
 %changelog
-* Mon Apr 27 2026 pm3 maintainers <maintainers@localhost> - 0.0.1-1
+* Mon Apr 27 2026 pm3 maintainers <maintainers@localhost> - 1.0.0-1
 - Add initial RPM packaging and systemd unit
