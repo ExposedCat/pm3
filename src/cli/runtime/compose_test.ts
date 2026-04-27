@@ -74,10 +74,38 @@ Deno.test({
       });
 
       assertEquals(lines, [
+        "Starting api/web",
         "Starting api/web_api",
         "    \x1b[33mWARN: pm3_web_api_1 warning\x1b[0m",
         "Started api/web_api",
       ]);
+    });
+  },
+});
+
+Deno.test({
+  name: "compose progress starts every discovered service",
+  sanitizeResources: false,
+  async fn() {
+    await withTempComposeProject(async ({ project }) => {
+      const lines = await captureConsoleLog(async () => {
+        await runProjectCompose(project, ["up", "-d"], {
+          runLineStream: () =>
+            Promise.resolve({ stop: () => Promise.resolve() }),
+          runProcess: (command) => {
+            if (isComposeConfigCommand(command)) {
+              return Promise.resolve({
+                code: 0,
+                stdout: "web\nworker\n",
+              });
+            }
+
+            return Promise.resolve({ code: 0 });
+          },
+        });
+      });
+
+      assertEquals(lines, ["Starting api/web", "Starting api/worker"]);
     });
   },
 });

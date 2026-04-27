@@ -7,6 +7,8 @@ import type { ProcessCommand } from "./process.ts";
 const PODMAN_COMPOSE_COMMAND = "podman-compose";
 const PODMAN_COMMAND = "podman";
 const PODMAN_COMPOSE_FILES = [
+  "podman-compose.yaml",
+  "podman-compose.yml",
   "compose.yaml",
   "compose.yml",
   "docker-compose.yaml",
@@ -197,6 +199,16 @@ async function startComposeProgress(
   const finished = new Set<string>();
   const started = new Set<string>();
   const serviceNames = new Set(services);
+  for (const service of services) {
+    startComposeServiceProgress(
+      project.name,
+      operation,
+      started,
+      service,
+      output,
+    );
+  }
+
   const { runSystemLineStream } = await import("./process.ts");
   const runLineStream = options.runLineStream ?? runSystemLineStream;
   const stream = await runLineStream(

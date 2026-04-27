@@ -84,6 +84,46 @@ Deno.test({
 });
 
 Deno.test({
+  name: "list recognizes podman-compose files",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const apiDir = join(root, "api");
+      await Deno.mkdir(apiDir);
+      await Deno.writeTextFile(
+        join(apiDir, "podman-compose.yml"),
+        "services: {}\n",
+      );
+      await runCli(["create", apiDir, "--name", "api"], databasePath);
+
+      const commands: ProcessCommand[] = [];
+      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
+        commands.push(command);
+        return Promise.resolve({
+          code: 0,
+          stdout: JSON.stringify([{ State: "running", Status: "Up 1 minute" }]),
+        });
+      };
+
+      const output = await runCli(["list"], databasePath, runProcess);
+
+      assertEquals(
+        output,
+        ["NAME  STATE", "api   \x1b[32mup\x1b[0m"].join("\n"),
+      );
+      assertEquals(commands, [
+        {
+          command: "podman-compose",
+          args: ["ps", "--format", "json"],
+          cwd: resolve(apiDir),
+          captureOutput: true,
+        },
+      ]);
+    });
+  },
+});
+
+Deno.test({
   name: "list prints pending when compose containers have mixed states",
   sanitizeResources: false,
   async fn() {
