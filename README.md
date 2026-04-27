@@ -4,6 +4,9 @@
 </h1>
 
 <div align="center">
+<a href="https://copr.fedorainfracloud.org/coprs/exposedcat/pm3/package/pm3/">
+
+<img src="https://copr.fedorainfracloud.org/coprs/exposedcat/pm3/package/pm3/status_image/last_build.png" /></a>
 
 <a href="https://coff.ee/exposedcat" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
 
