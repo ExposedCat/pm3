@@ -5,6 +5,8 @@ import type {
   ProcessResult,
 } from "../command.ts";
 
+const PROCESS_OUTPUT_TAIL_LIMIT = 64 * 1024;
+
 export async function runSystemProcess(
   command: ProcessCommand,
 ): Promise<ProcessResult> {
@@ -30,6 +32,7 @@ export async function runSystemProcess(
         ? (text) => command.onOutput?.({ stream: "stdout", text })
         : undefined,
       command.verbose && !command.captureOutput ? Deno.stdout : undefined,
+      command.captureOutput ? undefined : PROCESS_OUTPUT_TAIL_LIMIT,
     ),
     collectOutput(
       child.stderr,
@@ -37,6 +40,7 @@ export async function runSystemProcess(
         ? (text) => command.onOutput?.({ stream: "stderr", text })
         : undefined,
       command.verbose && !command.captureOutput ? Deno.stderr : undefined,
+      command.captureOutput ? undefined : PROCESS_OUTPUT_TAIL_LIMIT,
     ),
   ]);
 
@@ -51,14 +55,34 @@ async function collectOutput(
   stream: ReadableStream<Uint8Array>,
   onOutput?: (text: string) => void,
   writer?: Pick<typeof Deno.stdout, "write">,
+  tailLimit?: number,
 ): Promise<string> {
   const streamDecoder = new TextDecoder();
   const chunks: Uint8Array[] = [];
+  let output = "";
 
   for await (const chunk of stream) {
-    chunks.push(chunk);
-    onOutput?.(streamDecoder.decode(chunk, { stream: true }));
+    const text = streamDecoder.decode(chunk, { stream: true });
+    onOutput?.(text);
+    if (tailLimit === undefined) {
+      chunks.push(chunk);
+    } else {
+      output = `${output}${text}`.slice(-tailLimit);
+    }
     await writer?.write(chunk);
+  }
+
+  const remaining = streamDecoder.decode();
+  if (remaining) {
+    onOutput?.(remaining);
+    output =
+      tailLimit === undefined
+        ? output
+        : `${output}${remaining}`.slice(-tailLimit);
+  }
+
+  if (tailLimit !== undefined) {
+    return output;
   }
 
   return new TextDecoder().decode(concatChunks(chunks));
@@ -129,7 +153,7 @@ async function settlesWithin(
 
 function delay(milliseconds: number): Promise<false> {
   return new Promise((resolve) =>
-    setTimeout(() => resolve(false), milliseconds)
+    setTimeout(() => resolve(false), milliseconds),
   );
 }
 

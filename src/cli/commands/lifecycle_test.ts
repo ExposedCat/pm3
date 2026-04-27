@@ -53,10 +53,8 @@ Deno.test({
       await Deno.mkdir(workdir);
       await runCli(["create", workdir, "--name", "api"], databasePath);
 
-      const output = await runCliProcess(
-        ["start", "api"],
-        databasePath,
-        () => Promise.resolve({ code: 1 }),
+      const output = await runCliProcess(["start", "api"], databasePath, () =>
+        Promise.resolve({ code: 1 }),
       );
 
       assertEquals(output.code, 1);
@@ -75,11 +73,8 @@ Deno.test({
       await Deno.mkdir(workdir);
       await runCli(["create", workdir, "--name", "api"], databasePath);
 
-      const output = await runCli(
-        ["start", "api"],
-        databasePath,
-        () =>
-          Promise.resolve({ code: 0, stderr: "WARN: image uses latest tag" }),
+      const output = await runCli(["start", "api"], databasePath, () =>
+        Promise.resolve({ code: 0, stderr: "WARN: image uses latest tag" }),
       );
 
       assertEquals(output, "Finished with 1 warnings");
@@ -224,6 +219,44 @@ Deno.test({
           command: "podman-compose",
           args: ["up", "-d", "--force-recreate"],
           cwd: resolve(workdir),
+        },
+      ]);
+    });
+  },
+});
+
+Deno.test({
+  name: "detached rebuild waits for build before detaching recreated containers",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const workdir = join(root, "api");
+      await Deno.mkdir(workdir);
+      await runCli(["create", workdir, "--name", "api"], databasePath);
+
+      const commands: ProcessCommand[] = [];
+      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
+        commands.push(command);
+        return Promise.resolve({ code: 0 });
+      };
+
+      await runCli(
+        ["start", "--build", "--detach", "api"],
+        databasePath,
+        runProcess,
+      );
+
+      assertEquals(commands, [
+        {
+          command: "podman-compose",
+          args: ["build"],
+          cwd: resolve(workdir),
+        },
+        {
+          command: "podman-compose",
+          args: ["up", "-d", "--force-recreate"],
+          cwd: resolve(workdir),
+          detached: true,
         },
       ]);
     });

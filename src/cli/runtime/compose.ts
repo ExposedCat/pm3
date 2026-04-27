@@ -1,6 +1,8 @@
 import type { Project } from "../../database/projects.ts";
 import type { ProcessCommand, RunCommandOptions } from "../command.ts";
 import { inputError } from "../errors.ts";
+import { yellow } from "../output/color.ts";
+import { startLoader } from "../output/loader.ts";
 
 const PODMAN_COMPOSE_COMMAND = "podman-compose";
 const PODMAN_COMMAND = "podman";
@@ -10,7 +12,6 @@ const PODMAN_COMPOSE_FILES = [
   "docker-compose.yaml",
   "docker-compose.yml",
 ];
-const LOADER_FRAMES = ["-", "\\", "|", "/"] as const;
 const EVENT_STREAM_STOP_GRACE_MS = 150;
 
 export async function runProjectCompose(
@@ -25,31 +26,33 @@ export async function runProjectCompose(
   const loader = startLoader(`${operation} ${project.name}`, {
     enabled: !options.verbose && !runOptions.detached,
   });
-  const progress = runOptions.detached
-    ? createEmptyComposeProgress()
-    : await startComposeProgress(project, operation, options, {
-      finishLine: loader.finishLine,
-      writeLineAfter: loader.writeLineAfter,
-      startLine: loader.startLine,
-    });
-
-  const command: ProcessCommand = {
-    command: PODMAN_COMPOSE_COMMAND,
-    args: progress.captureComposeCommands ? ["--verbose", ...args] : args,
-    cwd: project.workingDir,
-  };
-  if (runOptions.detached) {
-    command.detached = true;
-  }
-  if (progress.captureComposeCommands) {
-    command.onOutput = ({ text }) => progress.writeComposeOutput(text);
-  }
-  if (options.verbose) {
-    command.verbose = true;
-  }
+  let progress = createEmptyComposeProgress();
 
   const result = await (async () => {
     try {
+      progress = runOptions.detached
+        ? createEmptyComposeProgress()
+        : await startComposeProgress(project, operation, options, {
+            finishLine: loader.finishLine,
+            writeLineAfter: loader.writeLineAfter,
+            startLine: loader.startLine,
+          });
+
+      const command: ProcessCommand = {
+        command: PODMAN_COMPOSE_COMMAND,
+        args: progress.captureComposeCommands ? ["--verbose", ...args] : args,
+        cwd: project.workingDir,
+      };
+      if (runOptions.detached) {
+        command.detached = true;
+      }
+      if (progress.captureComposeCommands) {
+        command.onOutput = ({ text }) => progress.writeComposeOutput(text);
+      }
+      if (options.verbose) {
+        command.verbose = true;
+      }
+
       return await runProcess(command);
     } finally {
       loader.stop();
@@ -173,26 +176,17 @@ async function startComposeProgress(
   output: ComposeOutput,
 ): Promise<ComposeProgress> {
   if (
-    operation === "Building" || (options.runProcess && !options.runLineStream)
+    operation === "Building" ||
+    (options.runProcess && !options.runLineStream)
   ) {
-    return {
-      captureComposeCommands: false,
-      shownNoticeCount: () => 0,
-      stop: () => Promise.resolve(),
-      writeComposeOutput: () => {},
-    };
+    return createEmptyComposeProgress();
   }
 
   const { runSystemProcess } = await import("./process.ts");
   const runProcess = options.runProcess ?? runSystemProcess;
   const services = await listComposeServices(project, runProcess);
   if (services.length === 0) {
-    return {
-      captureComposeCommands: false,
-      shownNoticeCount: () => 0,
-      stop: () => Promise.resolve(),
-      writeComposeOutput: () => {},
-    };
+    return createEmptyComposeProgress();
   }
 
   const finished = new Set<string>();
@@ -229,7 +223,6 @@ async function startComposeProgress(
       finishComposeProgress(
         project.name,
         operation,
-        services,
         finished,
         started,
         service,
@@ -264,36 +257,30 @@ async function startComposeProgress(
           startComposeServiceProgress(
             project.name,
             operation,
-            services,
             started,
             service,
             output,
           );
         }
 
-        const noticeService = getComposeNoticeService(services, line) ||
-          lastCommandService;
+        const noticeService =
+          getComposeNoticeService(services, line) || lastCommandService;
         if (noticeService && isComposeNoticeLine(line)) {
           const parentLine = formatComposeProgressLine(
             project.name,
             finished.has(noticeService)
               ? getFinishedComposeOperation(operation)
               : operation,
-            services,
             noticeService,
           );
           startComposeServiceProgress(
             project.name,
             operation,
-            services,
             started,
             noticeService,
             output,
           );
-          output.writeLineAfter(
-            parentLine,
-            formatComposeNoticeLine(line),
-          );
+          output.writeLineAfter(parentLine, formatComposeNoticeLine(line));
           shownNoticeCount += 1;
         }
       }
@@ -345,8 +332,8 @@ type PodmanEvent = {
 function getComposeEventService(event: PodmanEvent | undefined): string {
   return (
     event?.Attributes?.["io.podman.compose.service"] ??
-      event?.Attributes?.["com.docker.compose.service"] ??
-      ""
+    event?.Attributes?.["com.docker.compose.service"] ??
+    ""
   );
 }
 
@@ -379,7 +366,7 @@ function getComposeCommandService(
     return "";
   }
 
-  return services.find((service) => normalized.includes(`_${service}_`)) ?? "";
+  return findServiceInComposeLine(services, normalized);
 }
 
 function getPodmanCommandsForOperation(
@@ -403,7 +390,6 @@ function getPodmanCommandsForOperation(
 function startComposeServiceProgress(
   projectName: string,
   operation: ComposeOperation,
-  services: readonly string[],
   started: Set<string>,
   service: string,
   output: ComposeOutput,
@@ -413,15 +399,12 @@ function startComposeServiceProgress(
   }
 
   started.add(service);
-  output.startLine(
-    formatComposeProgressLine(projectName, operation, services, service),
-  );
+  output.startLine(formatComposeProgressLine(projectName, operation, service));
 }
 
 function finishComposeProgress(
   projectName: string,
   operation: ComposeOperation,
-  services: readonly string[],
   finished: Set<string>,
   started: Set<string>,
   service: string,
@@ -431,16 +414,10 @@ function finishComposeProgress(
     return;
   }
 
-  const line = formatComposeProgressLine(
-    projectName,
-    operation,
-    services,
-    service,
-  );
+  const line = formatComposeProgressLine(projectName, operation, service);
   const finishedLine = formatComposeProgressLine(
     projectName,
     getFinishedComposeOperation(operation),
-    services,
     service,
   );
   if (!started.has(service)) {
@@ -455,7 +432,6 @@ function finishComposeProgress(
 function formatComposeProgressLine(
   projectName: string,
   operation: string,
-  _services: readonly string[],
   service: string,
 ): string {
   return `${operation} ${projectName}/${service}`;
@@ -485,7 +461,18 @@ function getComposeNoticeService(
   services: readonly string[],
   line: string,
 ): string {
-  return services.find((service) => line.includes(`_${service}_`)) ?? "";
+  return findServiceInComposeLine(services, line);
+}
+
+function findServiceInComposeLine(
+  services: readonly string[],
+  line: string,
+): string {
+  return (
+    [...services]
+      .sort((left, right) => right.length - left.length)
+      .find((service) => line.includes(`_${service}_`)) ?? ""
+  );
 }
 
 function isComposeNoticeLine(line: string): boolean {
@@ -493,7 +480,7 @@ function isComposeNoticeLine(line: string): boolean {
 }
 
 function formatComposeNoticeLine(line: string): string {
-  return `\x1b[33m${formatComposeNoticeText(line)}\x1b[0m`;
+  return yellow(formatComposeNoticeText(line));
 }
 
 function formatComposeNoticeText(line: string): string {
@@ -527,142 +514,11 @@ function unescapeLogfmtQuotedValue(value: string): string {
   });
 }
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-type Loader = {
-  finishLine(line: string, finishedLine: string): void;
-  startLine(line: string): void;
-  stop(): void;
-  writeLineAfter(parentLine: string, line: string): void;
-};
-
-function startLoader(label: string, options: { enabled: boolean }): Loader {
-  if (!options.enabled || !isTerminal(Deno.stdout)) {
-    return {
-      finishLine: (_line, finishedLine) => console.log(finishedLine),
-      startLine: (line) => console.log(line),
-      stop: () => {},
-      writeLineAfter: (_parentLine, line) => console.log(`    ${line}`),
-    };
-  }
-
-  let index = 0;
-  let renderedRowCount = 0;
-  const lines: { active: boolean; label: string }[] = [];
-  const encoder = new TextEncoder();
-  const render = () => {
-    const frame = LOADER_FRAMES[index % LOADER_FRAMES.length];
-    const output: string[] = [];
-
-    if (renderedRowCount > 0) {
-      output.push(`\x1b[${renderedRowCount}A\r\x1b[J`);
-    }
-
-    const renderedLines = lines.length > 0
-      ? lines.map((line) =>
-        line.active ? `${frame} ${line.label}...` : `  ${line.label}`
-      )
-      : [`${frame} ${label}...`];
-
-    for (const line of renderedLines) {
-      output.push(`\r\x1b[K${line}\n`);
-    }
-
-    Deno.stdout.writeSync(encoder.encode(output.join("")));
-    renderedRowCount = countRenderedRows(renderedLines, getTerminalColumns());
-  };
-  const timer = setInterval(() => {
-    if (lines.length > 0 && !lines.some((line) => line.active)) {
-      return;
-    }
-
-    index += 1;
-    render();
-  }, 100);
-  render();
-
-  return {
-    finishLine(label: string, finishedLabel = label) {
-      const line = lines.find((entry) => entry.label === label);
-      if (line) {
-        line.active = false;
-        line.label = finishedLabel;
-        render();
-      }
-    },
-    startLine(label: string) {
-      if (!lines.some((line) => line.label === label)) {
-        lines.push({ active: true, label });
-        render();
-      }
-    },
-    stop() {
-      clearInterval(timer);
-      if (lines.length === 0) {
-        Deno.stdout.writeSync(
-          encoder.encode(`\x1b[${renderedRowCount}A\r\x1b[J`),
-        );
-        return;
-      }
-
-      for (const line of lines) {
-        line.active = false;
-      }
-      render();
-    },
-    writeLineAfter(parentLine: string, label: string) {
-      if (lines.some((line) => line.label === label)) {
-        return;
-      }
-
-      const parentIndex = lines.findIndex((line) => line.label === parentLine);
-      const insertIndex = parentIndex === -1 ? lines.length : parentIndex + 1;
-      lines.splice(insertIndex, 0, { active: false, label: `  ${label}` });
-      render();
-    },
-  };
-}
-
-function getTerminalColumns(): number {
-  try {
-    return Math.max(1, Deno.consoleSize().columns);
-  } catch {
-    return 80;
-  }
-}
-
-function countRenderedRows(lines: readonly string[], columns: number): number {
-  return lines.reduce(
-    (total, line) =>
-      total + stripAnsi(line).split(/\r?\n/).reduce(
-        (lineTotal, segment) =>
-          lineTotal + Math.max(1, Math.ceil(segment.length / columns)),
-        0,
-      ),
-    0,
-  );
-}
-
-function stripAnsi(value: string): string {
-  const escape = String.fromCharCode(27);
-  return value.replace(new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, "g"), "");
-}
-
 type ComposeOutput = {
   finishLine(line: string, finishedLine: string): void;
   startLine(line: string): void;
   writeLineAfter(parentLine: string, line: string): void;
 };
-
-type TerminalWriter = {
-  isTerminal?: () => boolean;
-};
-
-function isTerminal(writer: TerminalWriter): boolean {
-  return writer.isTerminal?.() ?? false;
-}
 
 function formatComposeFailure(result: { stdout?: string; stderr?: string }) {
   return result.stderr || result.stdout || `${PODMAN_COMPOSE_COMMAND} failed`;
@@ -672,6 +528,10 @@ function countWarnings(result: { stdout?: string; stderr?: string }): number {
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`
     .split("\n")
     .filter((line) => /\bwarn(?:ing)?\b/i.test(line)).length;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function hasComposeFile(workingDir: string): Promise<boolean> {
@@ -730,8 +590,8 @@ function parseComposeContainerJson(output: string): ProjectComposeContainer[] {
 function getComposeContainerService(container: PodmanComposeContainer): string {
   return (
     container.Labels?.["io.podman.compose.service"] ??
-      container.Labels?.["com.docker.compose.service"] ??
-      ""
+    container.Labels?.["com.docker.compose.service"] ??
+    ""
   );
 }
 

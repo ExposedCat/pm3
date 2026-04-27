@@ -153,7 +153,6 @@ async function runLifecycleCommand(
       project,
       ["build", ...(command.noCache ? ["--no-cache"] : [])],
       options,
-      { detached: command.detach },
     );
     await runProjectCompose(
       project,

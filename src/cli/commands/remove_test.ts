@@ -131,8 +131,7 @@ Deno.test({
 });
 
 Deno.test({
-  name:
-    "detached remove cleans artifacts silently in the background and deletes the project",
+  name: "remove rejects detached cleanup",
   sanitizeResources: false,
   async fn() {
     await withTempCli(async ({ databasePath, root }) => {
@@ -141,47 +140,17 @@ Deno.test({
       await Deno.writeTextFile(join(workdir, "compose.yaml"), "services: {}\n");
       await runCli(["create", workdir, "--name", "api"], databasePath);
 
-      const commands: ProcessCommand[] = [];
-      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
-        commands.push(command);
-        return Promise.resolve({
-          code: 0,
-          stdout: command.captureOutput
-            ? JSON.stringify([{ State: "exited" }])
-            : undefined,
-          stderr: command.detached ? "WARN: removing volumes" : undefined,
-        });
-      };
+      const output = await runCliProcess(["rm", "-d", "api"], databasePath);
 
-      const output = await runCli(
-        ["rm", "-d", "api"],
-        databasePath,
-        runProcess,
-      );
-
-      assertEquals(output, "");
-      assertEquals(await runCli(["list"], databasePath), "NAME  STATE");
-      assertEquals(commands, [
-        {
-          command: "podman-compose",
-          args: ["ps", "--format", "json"],
-          cwd: resolve(workdir),
-          captureOutput: true,
-        },
-        {
-          command: "podman-compose",
-          args: ["down", "--volumes", "--rmi", "all", "--remove-orphans"],
-          cwd: resolve(workdir),
-          detached: true,
-        },
-      ]);
+      assertEquals(output.code, 1);
+      assertEquals(output.stdout, "");
+      assertEquals(output.stderr, "Unknown option for remove: -d");
     });
   },
 });
 
 Deno.test({
-  name:
-    "remove keeps the project and prints compose errors when podman cleanup fails",
+  name: "remove keeps the project and prints compose errors when podman cleanup fails",
   sanitizeResources: false,
   async fn() {
     await withTempCli(async ({ databasePath, root }) => {

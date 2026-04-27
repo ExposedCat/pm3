@@ -3,6 +3,7 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../command.ts";
+import { green, red, yellow } from "../output/color.ts";
 import { formatTable } from "../output/table.ts";
 import { requireNoExtraArgs } from "../utils.ts";
 
@@ -132,7 +133,7 @@ function getProjectStateDuration(
 
   const timestamps = containers
     .map((container) =>
-      state === "up" ? container.startedAt : container.exitedAt
+      state === "up" ? container.startedAt : container.exitedAt,
     )
     .filter(Boolean);
 
@@ -217,7 +218,8 @@ function compactDuration(duration: string): string {
   }
 
   const [, days, hours, minutes] = match;
-  const totalSeconds = Number(days ?? 0) * 24 * 60 * 60 +
+  const totalSeconds =
+    Number(days ?? 0) * 24 * 60 * 60 +
     Number(hours ?? 0) * 60 * 60 +
     Number(minutes ?? 0) * 60;
 
@@ -234,18 +236,49 @@ function printRows(
 ): void {
   if (options.detailed) {
     console.log(
-      formatTable([
-        ["NAME", "STATE", "CREATED", "PORTS"],
-        ...rows.map((row) => [row.name, row.state, row.created, row.ports]),
-      ]),
+      formatTable(
+        [
+          ["NAME", "STATE", "CREATED", "PORTS"],
+          ...rows.map((row) => [row.name, row.state, row.created, row.ports]),
+        ],
+        { formatCell: formatListCell },
+      ),
     );
     return;
   }
 
   console.log(
-    formatTable([
-      ["NAME", "STATE"],
-      ...rows.map((row) => [row.name, row.state]),
-    ]),
+    formatTable(
+      [["NAME", "STATE"], ...rows.map((row) => [row.name, row.state])],
+      { formatCell: formatListCell },
+    ),
   );
+}
+
+function formatListCell(cell: {
+  header: string | undefined;
+  value: string;
+}): string {
+  if (cell.header !== "STATE") {
+    return cell.value;
+  }
+
+  const match = cell.value.match(/^(.+?)(\s*)$/);
+  const content = match?.[1] ?? cell.value;
+  const padding = match?.[2] ?? "";
+  const state = content.match(/^(down|pending|up)(?:\s|$)/)?.[1];
+
+  if (state === "down") {
+    return `${red(content)}${padding}`;
+  }
+
+  if (state === "pending") {
+    return `${yellow(content)}${padding}`;
+  }
+
+  if (state === "up") {
+    return `${green(content)}${padding}`;
+  }
+
+  return cell.value;
 }

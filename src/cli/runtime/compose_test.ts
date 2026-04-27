@@ -5,8 +5,7 @@ import type { ProcessCommand } from "../command.ts";
 import { runProjectCompose } from "./compose.ts";
 
 Deno.test({
-  name:
-    "non-verbose compose output prints notices below the affected progress step",
+  name: "non-verbose compose output prints notices below the affected progress step",
   sanitizeResources: false,
   async fn() {
     await withTempComposeProject(async ({ project }) => {
@@ -24,8 +23,7 @@ Deno.test({
 
             command.onOutput?.({
               stream: "stderr",
-              text:
-                "podman start pm3_web_1\nWARN: pm3_web_1 image uses latest tag\n",
+              text: "podman start pm3_web_1\nWARN: pm3_web_1 image uses latest tag\n",
             });
             emitEvent?.(composeEvent("start", "web"));
             return Promise.resolve({
@@ -40,6 +38,45 @@ Deno.test({
         "Starting api/web",
         "    \x1b[33mWARN: pm3_web_1 image uses latest tag\x1b[0m",
         "Started api/web",
+      ]);
+    });
+  },
+});
+
+Deno.test({
+  name: "compose output attributes overlapping service names to the longest match",
+  sanitizeResources: false,
+  async fn() {
+    await withTempComposeProject(async ({ project }) => {
+      let emitEvent: ((line: string) => void) | undefined;
+      const lines = await captureConsoleLog(async () => {
+        await runProjectCompose(project, ["up", "-d"], {
+          runLineStream: (_command, onLine) => {
+            emitEvent = onLine;
+            return Promise.resolve({ stop: () => Promise.resolve() });
+          },
+          runProcess: (command) => {
+            if (isComposeConfigCommand(command)) {
+              return Promise.resolve({ code: 0, stdout: "web\nweb_api\n" });
+            }
+
+            command.onOutput?.({
+              stream: "stderr",
+              text: "podman start pm3_web_api_1\nWARN: pm3_web_api_1 warning\n",
+            });
+            emitEvent?.(composeEvent("start", "web_api"));
+            return Promise.resolve({
+              code: 0,
+              stderr: "WARN: pm3_web_api_1 warning",
+            });
+          },
+        });
+      });
+
+      assertEquals(lines, [
+        "Starting api/web_api",
+        "    \x1b[33mWARN: pm3_web_api_1 warning\x1b[0m",
+        "Started api/web_api",
       ]);
     });
   },
@@ -102,8 +139,7 @@ Deno.test({
 
             command.onOutput?.({
               stream: "stderr",
-              text:
-                "podman start pm3_web_1\nWARN: pm3_web_1 image uses a very long latest tag\n",
+              text: "podman start pm3_web_1\nWARN: pm3_web_1 image uses a very long latest tag\n",
             });
             emitEvent?.(composeEvent("start", "web"));
             return Promise.resolve({
@@ -127,13 +163,11 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     await withTempComposeProject(async ({ project }) => {
-      for (
-        const [args, status, expected] of [
-          [["stop"], "stop", ["Stopping api/web", "Stopped api/web"]],
-          [["restart"], "start", ["Restarting api/web", "Restarted api/web"]],
-          [["down"], "remove", ["Removing api/web", "Removed api/web"]],
-        ] as const
-      ) {
+      for (const [args, status, expected] of [
+        [["stop"], "stop", ["Stopping api/web", "Stopped api/web"]],
+        [["restart"], "start", ["Restarting api/web", "Restarted api/web"]],
+        [["down"], "remove", ["Removing api/web", "Removed api/web"]],
+      ] as const) {
         let emitEvent: ((line: string) => void) | undefined;
         const lines = await captureConsoleLog(async () => {
           await runProjectCompose(project, args, {
@@ -244,8 +278,10 @@ async function captureTerminalOutput(
 }
 
 function isComposeConfigCommand(command: ProcessCommand): boolean {
-  return command.command === "podman-compose" &&
-    command.args.join(" ") === "config --services";
+  return (
+    command.command === "podman-compose" &&
+    command.args.join(" ") === "config --services"
+  );
 }
 
 function composeEvent(status: string, service: string): string {

@@ -74,8 +74,10 @@ Deno.test({
       assertEquals(createOutput.stderr, "");
       assertEquals(
         createOutput.stdout,
-        [`Created api at ${resolve(workdir)}`, "Start with `pm3 start api`"]
-          .join("\n"),
+        [
+          `Created api at ${resolve(workdir)}`,
+          "Start with `pm3 start api`",
+        ].join("\n"),
       );
       assertEquals(listOutput.code, 0);
       assertEquals(listOutput.stderr, "");
@@ -115,8 +117,10 @@ Deno.test({
 
           assertEquals(
             createOutput,
-            [`Created api at ${resolve(workdir)}`, "Start with `pm3 start api`"]
-              .join("\n"),
+            [
+              `Created api at ${resolve(workdir)}`,
+              "Start with `pm3 start api`",
+            ].join("\n"),
           );
           assertEquals(
             listOutput,
@@ -152,8 +156,10 @@ Deno.test({
 
           assertEquals(
             createOutput,
-            [`Created api at ${resolve(workdir)}`, "Start with `pm3 start api`"]
-              .join("\n"),
+            [
+              `Created api at ${resolve(workdir)}`,
+              "Start with `pm3 start api`",
+            ].join("\n"),
           );
           assertEquals(
             listOutput,

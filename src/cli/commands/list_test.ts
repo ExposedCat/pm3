@@ -93,17 +93,14 @@ Deno.test({
       await Deno.writeTextFile(join(apiDir, "compose.yaml"), "services: {}\n");
       await runCli(["create", apiDir, "--name", "api"], databasePath);
 
-      const output = await runCli(
-        ["list"],
-        databasePath,
-        () =>
-          Promise.resolve({
-            code: 0,
-            stdout: JSON.stringify([
-              { State: "running", Status: "Up 1 minute" },
-              { State: "exited", Status: "Exited (0) 1 minute ago" },
-            ]),
-          }),
+      const output = await runCli(["list"], databasePath, () =>
+        Promise.resolve({
+          code: 0,
+          stdout: JSON.stringify([
+            { State: "running", Status: "Up 1 minute" },
+            { State: "exited", Status: "Exited (0) 1 minute ago" },
+          ]),
+        }),
       );
 
       assertEquals(
@@ -125,27 +122,24 @@ Deno.test({
       await runCli(["create", apiDir, "--name", "api"], databasePath);
       const now = currentTimestampSeconds();
 
-      const output = await runCli(
-        ["list", "--detailed"],
-        databasePath,
-        () =>
-          Promise.resolve({
-            code: 0,
-            stdout: JSON.stringify([
-              {
-                State: "running",
-                Status: "Up 1 minute",
-                Created: now - 60 * 60,
-                StartedAt: now - 60,
-              },
-              {
-                State: "exited",
-                Status: "Exited (0) 30 minutes ago",
-                Created: now - 60 * 60,
-                ExitedAt: now - 30 * 60,
-              },
-            ]),
-          }),
+      const output = await runCli(["list", "--detailed"], databasePath, () =>
+        Promise.resolve({
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              State: "running",
+              Status: "Up 1 minute",
+              Created: now - 60 * 60,
+              StartedAt: now - 60,
+            },
+            {
+              State: "exited",
+              Status: "Exited (0) 30 minutes ago",
+              Created: now - 60 * 60,
+              ExitedAt: now - 30 * 60,
+            },
+          ]),
+        }),
       );
 
       assertEquals(
@@ -170,45 +164,42 @@ Deno.test({
       await runCli(["create", apiDir, "--name", "api"], databasePath);
       const now = currentTimestampSeconds();
 
-      const output = await runCli(
-        ["list", "--detailed"],
-        databasePath,
-        () =>
-          Promise.resolve({
-            code: 0,
-            stdout: JSON.stringify([
-              {
-                State: "running",
-                Status: "Up 2 days 3 minutes",
-                Created: now - (3 * 24 * 60 * 60 + 4 * 60 * 60),
-                StartedAt: now - (2 * 24 * 60 * 60 + 3 * 60),
-                Ports: [
-                  {
-                    host_ip: "",
-                    container_port: 3000,
-                    host_port: 3101,
-                    range: 1,
-                    protocol: "tcp",
-                  },
-                ],
-              },
-              {
-                State: "running",
-                Status: "Up 2 days 3 minutes",
-                Created: now - (3 * 24 * 60 * 60 + 4 * 60 * 60),
-                StartedAt: now - (2 * 24 * 60 * 60 + 3 * 60),
-                Ports: [
-                  {
-                    host_ip: "",
-                    container_port: 3000,
-                    host_port: 3102,
-                    range: 1,
-                    protocol: "tcp",
-                  },
-                ],
-              },
-            ]),
-          }),
+      const output = await runCli(["list", "--detailed"], databasePath, () =>
+        Promise.resolve({
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              State: "running",
+              Status: "Up 2 days 3 minutes",
+              Created: now - (3 * 24 * 60 * 60 + 4 * 60 * 60),
+              StartedAt: now - (2 * 24 * 60 * 60 + 3 * 60),
+              Ports: [
+                {
+                  host_ip: "",
+                  container_port: 3000,
+                  host_port: 3101,
+                  range: 1,
+                  protocol: "tcp",
+                },
+              ],
+            },
+            {
+              State: "running",
+              Status: "Up 2 days 3 minutes",
+              Created: now - (3 * 24 * 60 * 60 + 4 * 60 * 60),
+              StartedAt: now - (2 * 24 * 60 * 60 + 3 * 60),
+              Ports: [
+                {
+                  host_ip: "",
+                  container_port: 3000,
+                  host_port: 3102,
+                  range: 1,
+                  protocol: "tcp",
+                },
+              ],
+            },
+          ]),
+        }),
       );
 
       assertEquals(

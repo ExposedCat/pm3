@@ -18,8 +18,10 @@ Deno.test({
 
       assertEquals(
         output,
-        [`Created api at ${resolve(workdir)}`, "Start with `pm3 start api`"]
-          .join("\n"),
+        [
+          `Created api at ${resolve(workdir)}`,
+          "Start with `pm3 start api`",
+        ].join("\n"),
       );
     });
   },
