@@ -1,0 +1,15 @@
+[Unit]
+Description=pm3 container orchestration daemon
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pm3 daemon
+Restart=on-failure
+RestartSec=5s
+StateDirectory=pm3
+Environment=PM3_DATABASE_PATH=/var/lib/pm3/pm3.sqlite
+
+[Install]
+WantedBy=multi-user.target

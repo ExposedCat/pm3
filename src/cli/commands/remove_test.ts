@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { join, resolve } from "@std/path";
-import type { ProcessCommand, ProcessResult } from "../command.ts";
+import type { ProcessCommand, ProcessResult } from "../runtime/process.ts";
 import { runCli, runCliProcess, withTempCli } from "../test_utils.ts";
 import "../../database/database.ts";
 

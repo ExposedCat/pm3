@@ -2,7 +2,7 @@ import type {
   CliCommand,
   CommandDefinition,
   RunCommandOptions,
-} from "../command.ts";
+} from "../commands.ts";
 import { inputError, usageError } from "../errors.ts";
 import { requireArgument } from "../utils.ts";
 
@@ -17,27 +17,23 @@ type LifecycleCommand = CliCommand<LifecycleCommandKind> & {
 
 export const startCommand = createLifecycleCommand({
   kind: "start",
-  args: ["up", "-d"],
   supportsBuild: true,
   description: "Start the project",
 });
 
 export const stopCommand = createLifecycleCommand({
   kind: "stop",
-  args: ["stop"],
   description: "Stop the project",
 });
 
 export const restartCommand = createLifecycleCommand({
   kind: "restart",
-  args: ["restart"],
   supportsBuild: true,
   description: "Restart the project",
 });
 
 type LifecycleCommandConfig = {
   kind: LifecycleCommandKind;
-  args: readonly string[];
   supportsBuild?: boolean;
   description: string;
 };
@@ -106,8 +102,7 @@ function parseLifecycleArgs(
     noCache,
     run: (options) =>
       runLifecycleCommand(
-        { name: parsedName, build, detach, noCache },
-        config.args,
+        { kind: config.kind, name: parsedName, build, detach, noCache },
         options,
       ),
   };
@@ -124,17 +119,18 @@ function assertLifecycleBuildOption(
 
 type LifecycleRunCommand = Pick<
   LifecycleCommand,
-  "build" | "detach" | "name" | "noCache"
+  "build" | "detach" | "kind" | "name" | "noCache"
 >;
 
 async function runLifecycleCommand(
   command: LifecycleRunCommand,
-  args: readonly string[],
   options: RunCommandOptions,
 ): Promise<void> {
   const { getProjectByName } = await import("../../database/projects.ts");
   const { withCliDatabase } = await import("../runtime/database.ts");
-  const { runProjectCompose } = await import("../runtime/compose.ts");
+  const { restartProject, startProject, stopProject } = await import(
+    "../../runtime/project.ts"
+  );
 
   await withCliDatabase(options, async (db) => {
     const project = await getProjectByName(db, command.name);
@@ -142,25 +138,24 @@ async function runLifecycleCommand(
       throw inputError(`Project not found: ${command.name}`);
     }
 
-    if (!command.build) {
-      await runProjectCompose(project, args, options, {
+    if (command.kind === "start") {
+      await startProject(project, options, {
+        build: command.build,
         detached: command.detach,
+        noCache: command.noCache,
       });
       return;
     }
 
-    await runProjectCompose(
-      project,
-      ["build", ...(command.noCache ? ["--no-cache"] : [])],
-      options,
-    );
-    await runProjectCompose(
-      project,
-      ["up", "-d", "--force-recreate"],
-      options,
-      {
+    if (command.kind === "restart") {
+      await restartProject(project, options, {
+        build: command.build,
         detached: command.detach,
-      },
-    );
+        noCache: command.noCache,
+      });
+      return;
+    }
+
+    await stopProject(project, options);
   });
 }

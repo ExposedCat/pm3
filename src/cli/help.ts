@@ -1,4 +1,4 @@
-import type { CommandDefinition } from "./command.ts";
+import type { CommandDefinition } from "./commands.ts";
 
 export function formatHelpText(commands: readonly CommandDefinition[]): string {
   const commandUsageLength = Math.max(

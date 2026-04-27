@@ -2,7 +2,7 @@ import type {
   CliCommand,
   CommandDefinition,
   RunCommandOptions,
-} from "../command.ts";
+} from "../commands.ts";
 import { inputError } from "../errors.ts";
 import { printProject } from "../output/project.ts";
 import { requireArgument, requireNoExtraArgs } from "../utils.ts";

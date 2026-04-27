@@ -1,4 +1,4 @@
-import type { CliCommand, CommandDefinition } from "../command.ts";
+import type { CliCommand, CommandDefinition } from "../commands.ts";
 import { requireNoExtraArgs } from "../utils.ts";
 
 export type HelpCommand = CliCommand<"help">;

@@ -4,8 +4,10 @@ import { closeDatabase, createDatabase } from "./database.ts";
 import {
   addProject,
   deleteProject,
+  enableProject,
   getProjectByName,
   getProjectDetails,
+  listEnabledProjects,
   listProjects,
 } from "./projects.ts";
 
@@ -20,11 +22,31 @@ Deno.test("projects can be added, listed, and loaded", async () => {
     });
 
     assertEquals(await listProjects(db), [
-      { id: project.id, name: "api", workingDir: project.workingDir },
+      {
+        id: project.id,
+        name: "api",
+        workingDir: project.workingDir,
+        enabled: 0,
+      },
     ]);
-    assertEquals(await getProjectDetails(db, project.id), project);
+    assertEquals(await getProjectDetails(db, project.id), {
+      ...project,
+      enabled: 0,
+    });
     assertEquals(await getProjectByName(db, "api"), project);
     assertEquals(await getProjectByName(db, "missing"), undefined);
+    assertEquals(await listEnabledProjects(db), []);
+
+    await enableProject(db, project.id);
+    await enableProject(db, project.id);
+    assertEquals(await listEnabledProjects(db), [
+      {
+        id: project.id,
+        name: "api",
+        workingDir: project.workingDir,
+        enabled: 1,
+      },
+    ]);
 
     await deleteProject(db, project.id);
     assertEquals(await listProjects(db), []);

@@ -1,8 +1,8 @@
 import { join } from "@std/path";
-import type { ProcessCommand, ProcessResult } from "./command.ts";
 import { parseArgs, runCommand } from "./commands.ts";
 import { formatCliError } from "./errors.ts";
 import { runCliMain } from "./main.ts";
+import type { ProcessCommand, ProcessResult } from "./runtime/process.ts";
 
 export async function runCli(
   args: string[],

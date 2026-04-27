@@ -5,17 +5,30 @@ export type ProjectTable = {
   id: Generated<number>;
   name: string;
   workingDir: string;
+  enabled: Generated<0 | 1>;
 };
 
 export type Project = Selectable<ProjectTable>;
-export type ProjectListItem = Pick<Project, "id" | "name" | "workingDir">;
+export type ProjectListItem = Pick<
+  Project,
+  "id" | "name" | "workingDir" | "enabled"
+>;
 
 export async function listProjects(
   db: PM3Database,
 ): Promise<ProjectListItem[]> {
   return await db
     .selectFrom("projects")
-    .select(["id", "name", "workingDir"])
+    .select(["id", "name", "workingDir", "enabled"])
+    .orderBy("name", "asc")
+    .execute();
+}
+
+export async function listEnabledProjects(db: PM3Database): Promise<Project[]> {
+  return await db
+    .selectFrom("projects")
+    .selectAll()
+    .where("enabled", "=", 1)
     .orderBy("name", "asc")
     .execute();
 }
@@ -69,4 +82,15 @@ export async function deleteProject(
   id: number,
 ): Promise<void> {
   await db.deleteFrom("projects").where("id", "=", id).execute();
+}
+
+export async function enableProject(
+  db: PM3Database,
+  id: number,
+): Promise<void> {
+  await db
+    .updateTable("projects")
+    .set({ enabled: 1 })
+    .where("id", "=", id)
+    .execute();
 }

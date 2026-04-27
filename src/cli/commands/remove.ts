@@ -2,7 +2,7 @@ import type {
   CliCommand,
   CommandDefinition,
   RunCommandOptions,
-} from "../command.ts";
+} from "../commands.ts";
 import { inputError, usageError } from "../errors.ts";
 import { requireArgument } from "../utils.ts";
 
@@ -60,8 +60,9 @@ async function runRemoveCommand(
     "../../database/projects.ts"
   );
   const { withCliDatabase } = await import("../runtime/database.ts");
-  const { listProjectComposeContainers, removeProjectComposeArtifacts } =
-    await import("../runtime/compose.ts");
+  const { listProjectContainers, removeProjectArtifacts } = await import(
+    "../../runtime/project.ts"
+  );
 
   await withCliDatabase(options, async (db) => {
     const project = await getProjectByName(db, command.name);
@@ -69,14 +70,14 @@ async function runRemoveCommand(
       throw inputError(`Failed to remove project: "${command.name}" not found`);
     }
 
-    const containers = await listProjectComposeContainers(project, options);
+    const containers = await listProjectContainers(project, options);
     if (!command.force && hasRunningContainer(containers)) {
       throw inputError(
         `Failed to remove project: "${command.name}" is running`,
       );
     }
 
-    await removeProjectComposeArtifacts(project, options);
+    await removeProjectArtifacts(project, options);
     await deleteProject(db, project.id);
   });
 }

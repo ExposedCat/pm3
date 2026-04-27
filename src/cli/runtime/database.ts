@@ -4,7 +4,7 @@ import {
   createDatabase,
   type PM3Database,
 } from "../../database/database.ts";
-import type { RunCommandOptions } from "../command.ts";
+import type { RunCommandOptions } from "../commands.ts";
 
 const DATABASE_PATH_ENV = "PM3_DATABASE_PATH";
 const XDG_DATA_HOME_ENV = "XDG_DATA_HOME";

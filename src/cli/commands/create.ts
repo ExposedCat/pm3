@@ -3,7 +3,7 @@ import type {
   CliCommand,
   CommandDefinition,
   RunCommandOptions,
-} from "../command.ts";
+} from "../commands.ts";
 import { usageError } from "../errors.ts";
 import { requireArgument, requireOptionValue } from "../utils.ts";
 

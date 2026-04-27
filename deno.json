@@ -1,16 +1,21 @@
 {
-	"tasks": {
-		"build": "deno compile --allow-read --allow-write --allow-env --allow-ffi --allow-run=podman-compose,podman --output dist/pm3 src/cli/main.ts",
-		"cli": "deno run --allow-read --allow-write --allow-env --allow-ffi --allow-run=podman-compose,podman src/cli/main.ts",
-		"check": "deno check src/**/*.ts; deno run --no-lock -A npm:@biomejs/biome@2.4.6 check src/ --write",
-		"test": "deno test --allow-read --allow-write --allow-env --allow-ffi --allow-run=deno",
-		"test:watch": "deno test --allow-read --allow-write --allow-env --allow-ffi --watch"
-	},
-	"imports": {
-		"@db/sqlite": "jsr:@db/sqlite@^0.13.0",
-		"@soapbox/kysely-deno-sqlite": "jsr:@soapbox/kysely-deno-sqlite@^2.2.0",
-		"@std/assert": "jsr:@std/assert@^1.0.15",
-		"@std/path": "jsr:@std/path@^1.1.4",
-		"kysely": "npm:kysely@0.27.6"
-	}
+  "version": "0.0.1",
+  "tasks": {
+    "build": "deno compile --allow-read --allow-write --allow-env --allow-ffi --allow-run=podman-compose,podman --output dist/pm3 src/cli/main.ts",
+    "cli": "deno run --allow-read --allow-write --allow-env --allow-ffi --allow-run=podman-compose,podman src/cli/main.ts",
+    "check": "deno run --allow-read --allow-run scripts/check.ts",
+    "test": "deno test --allow-read --allow-write --allow-env --allow-ffi --allow-run=deno",
+    "test:watch": "deno test --allow-read --allow-write --allow-env --allow-ffi --watch",
+    "release:detect-version": "deno run --allow-read --allow-write --allow-env --allow-run=git scripts/detect-version-change.ts",
+    "release:build-rpm": "deno run --allow-read --allow-write --allow-env --allow-run=tar,rpmbuild scripts/build-rpm.ts",
+    "release:assets": "deno run --allow-read --allow-write --allow-env scripts/prepare-release-assets.ts",
+    "release:create": "deno run --allow-env --allow-run=gh scripts/create-release.ts"
+  },
+  "imports": {
+    "@db/sqlite": "jsr:@db/sqlite@^0.13.0",
+    "@soapbox/kysely-deno-sqlite": "jsr:@soapbox/kysely-deno-sqlite@^2.2.0",
+    "@std/assert": "jsr:@std/assert@^1.0.15",
+    "@std/path": "jsr:@std/path@^1.1.4",
+    "kysely": "npm:kysely@0.27.6"
+  }
 }

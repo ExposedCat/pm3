@@ -1,8 +1,8 @@
 import { assertEquals } from "@std/assert";
 import { assert } from "@std/assert/assert";
 import { join } from "@std/path";
-import type { ProcessCommand } from "../command.ts";
 import { runProjectCompose } from "./compose.ts";
+import type { ProcessCommand } from "./process.ts";
 
 Deno.test({
   name: "non-verbose compose output prints notices below the affected progress step",

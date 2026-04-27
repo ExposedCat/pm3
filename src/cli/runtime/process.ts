@@ -1,11 +1,27 @@
-import type {
-  LineStream,
-  LineStreamCommand,
-  ProcessCommand,
-  ProcessResult,
-} from "../command.ts";
-
 const PROCESS_OUTPUT_TAIL_LIMIT = 64 * 1024;
+
+export type ProcessCommand = {
+  command: string;
+  args: readonly string[];
+  cwd: string;
+  captureOutput?: boolean;
+  detached?: boolean;
+  onOutput?: (chunk: ProcessOutputChunk) => void;
+  verbose?: boolean;
+};
+
+export type ProcessOutputChunk = {
+  stream: "stdout" | "stderr";
+  text: string;
+};
+
+export type ProcessResult = {
+  code: number;
+  stdout?: string;
+  stderr?: string;
+};
+
+export type RunProcess = (command: ProcessCommand) => Promise<ProcessResult>;
 
 export async function runSystemProcess(
   command: ProcessCommand,
@@ -100,6 +116,21 @@ function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {
 
   return output;
 }
+
+export type LineStreamCommand = {
+  command: string;
+  args: readonly string[];
+  cwd?: string;
+};
+
+export type LineStream = {
+  stop(): Promise<void>;
+};
+
+export type RunLineStream = (
+  command: LineStreamCommand,
+  onLine: (line: string) => void,
+) => Promise<LineStream>;
 
 export function runSystemLineStream(
   command: LineStreamCommand,

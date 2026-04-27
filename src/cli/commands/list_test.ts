@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { join, resolve } from "@std/path";
-import type { ProcessCommand, ProcessResult } from "../command.ts";
+import type { ProcessCommand, ProcessResult } from "../runtime/process.ts";
 import { runCli, withTempCli } from "../test_utils.ts";
 import "../../database/database.ts";
 
@@ -145,8 +145,8 @@ Deno.test({
       assertEquals(
         output,
         [
-          "NAME  STATE    CREATED  PORTS",
-          "api   \x1b[33mpending\x1b[0m  1h",
+          "NAME  STATE    STARTUP   CREATED  PORTS",
+          "api   \x1b[33mpending\x1b[0m  \x1b[31mdisabled\x1b[0m  1h",
         ].join("\n"),
       );
     });
@@ -162,6 +162,7 @@ Deno.test({
       await Deno.mkdir(apiDir);
       await Deno.writeTextFile(join(apiDir, "compose.yaml"), "services: {}\n");
       await runCli(["create", apiDir, "--name", "api"], databasePath);
+      await runCli(["enable", "api"], databasePath);
       const now = currentTimestampSeconds();
 
       const output = await runCli(["list", "--detailed"], databasePath, () =>
@@ -205,8 +206,8 @@ Deno.test({
       assertEquals(
         output,
         [
-          "NAME  STATE       CREATED  PORTS",
-          "api   \x1b[32mup (2d 3m)\x1b[0m  3d 4h    0.0.0.0:3101->3000/tcp; 0.0.0.0:3102->3000/tcp",
+          "NAME  STATE       STARTUP  CREATED  PORTS",
+          "api   \x1b[32mup (2d 3m)\x1b[0m  \x1b[32menabled\x1b[0m  3d 4h    0.0.0.0:3101->3000/tcp; 0.0.0.0:3102->3000/tcp",
         ].join("\n"),
       );
     });
@@ -220,7 +221,7 @@ Deno.test({
     await withTempCli(async ({ databasePath }) => {
       const output = await runCli(["list", "-d"], databasePath);
 
-      assertEquals(output, "NAME  STATE  CREATED  PORTS");
+      assertEquals(output, "NAME  STATE  STARTUP  CREATED  PORTS");
     });
   },
 });

@@ -2,7 +2,7 @@ import type {
   CliCommand,
   CommandDefinition,
   RunCommandOptions,
-} from "../command.ts";
+} from "../commands.ts";
 import { green, red, yellow } from "../output/color.ts";
 import { formatTable } from "../output/table.ts";
 import { requireNoExtraArgs } from "../utils.ts";
@@ -47,6 +47,7 @@ type ListOptions = {
 type ProjectListRow = {
   name: string;
   state: string;
+  startup: string;
   created: string;
   ports: string;
 };
@@ -56,19 +57,18 @@ async function runListCommand(
   listOptions: ListOptions,
 ): Promise<void> {
   const { listProjects } = await import("../../database/projects.ts");
-  const { listProjectComposeContainers } = await import(
-    "../runtime/compose.ts"
-  );
   const { withCliDatabase } = await import("../runtime/database.ts");
+  const { listProjectContainers } = await import("../../runtime/project.ts");
 
   await withCliDatabase(options, async (db) => {
     const projects = await listProjects(db);
     const rows: ProjectListRow[] = [];
 
     for (const project of projects) {
-      const containers = await listProjectComposeContainers(project, options);
+      const containers = await listProjectContainers(project, options);
       rows.push({
         name: project.name,
+        startup: project.enabled === 1 ? "enabled" : "disabled",
         ...formatProjectState(containers, listOptions),
       });
     }
@@ -87,7 +87,7 @@ function formatProjectState(
     ports: string;
   }[],
   options: ListOptions,
-): Omit<ProjectListRow, "name"> {
+): Omit<ProjectListRow, "name" | "startup"> {
   const state = getProjectState(containers);
   const duration = options.detailed
     ? getProjectStateDuration(containers, state)
@@ -238,8 +238,14 @@ function printRows(
     console.log(
       formatTable(
         [
-          ["NAME", "STATE", "CREATED", "PORTS"],
-          ...rows.map((row) => [row.name, row.state, row.created, row.ports]),
+          ["NAME", "STATE", "STARTUP", "CREATED", "PORTS"],
+          ...rows.map((row) => [
+            row.name,
+            row.state,
+            row.startup,
+            row.created,
+            row.ports,
+          ]),
         ],
         { formatCell: formatListCell },
       ),
@@ -259,6 +265,10 @@ function formatListCell(cell: {
   header: string | undefined;
   value: string;
 }): string {
+  if (cell.header === "STARTUP") {
+    return formatStartupCell(cell.value);
+  }
+
   if (cell.header !== "STATE") {
     return cell.value;
   }
@@ -281,4 +291,20 @@ function formatListCell(cell: {
   }
 
   return cell.value;
+}
+
+function formatStartupCell(value: string): string {
+  const match = value.match(/^(.+?)(\s*)$/);
+  const content = match?.[1] ?? value;
+  const padding = match?.[2] ?? "";
+
+  if (content === "enabled") {
+    return `${green(content)}${padding}`;
+  }
+
+  if (content === "disabled") {
+    return `${red(content)}${padding}`;
+  }
+
+  return value;
 }

@@ -1,8 +1,8 @@
-import type { Project } from "../../database/projects.ts";
-import type { ProcessCommand, RunCommandOptions } from "../command.ts";
+import type { RunCommandOptions } from "../commands.ts";
 import { inputError } from "../errors.ts";
 import { yellow } from "../output/color.ts";
 import { startLoader } from "../output/loader.ts";
+import type { ProcessCommand } from "./process.ts";
 
 const PODMAN_COMPOSE_COMMAND = "podman-compose";
 const PODMAN_COMMAND = "podman";
@@ -14,8 +14,13 @@ const PODMAN_COMPOSE_FILES = [
 ];
 const EVENT_STREAM_STOP_GRACE_MS = 150;
 
+type ComposeProject = {
+  name: string;
+  workingDir: string;
+};
+
 export async function runProjectCompose(
-  project: Project,
+  project: ComposeProject,
   args: readonly string[],
   options: RunCommandOptions,
   runOptions: ProjectComposeRunOptions = {},
@@ -75,7 +80,7 @@ export async function runProjectCompose(
 }
 
 export async function removeProjectComposeArtifacts(
-  project: Project,
+  project: ComposeProject,
   options: RunCommandOptions,
   runOptions: ProjectComposeRunOptions = {},
 ): Promise<void> {
@@ -106,7 +111,7 @@ export type ProjectComposeContainer = {
 };
 
 export async function listProjectComposeContainers(
-  project: Project,
+  project: ComposeProject,
   options: RunCommandOptions,
 ): Promise<ProjectComposeContainer[]> {
   if (!(await hasComposeFile(project.workingDir))) {
@@ -170,7 +175,7 @@ function createEmptyComposeProgress(): ComposeProgress {
 }
 
 async function startComposeProgress(
-  project: Project,
+  project: ComposeProject,
   operation: ComposeOperation,
   options: RunCommandOptions,
   output: ComposeOutput,
@@ -289,7 +294,7 @@ async function startComposeProgress(
 }
 
 async function listComposeServices(
-  project: Project,
+  project: ComposeProject,
   runProcess: (
     command: ProcessCommand,
   ) => Promise<{ code: number; stdout?: string }>,

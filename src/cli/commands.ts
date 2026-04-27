@@ -1,5 +1,6 @@
-import type { RunCommandOptions } from "./command.ts";
 import { createCommand } from "./commands/create.ts";
+import { daemonCommand } from "./commands/daemon.ts";
+import { enableCommand } from "./commands/enable.ts";
 import { helpCommand } from "./commands/help.ts";
 import {
   restartCommand,
@@ -11,20 +12,42 @@ import { removeCommand } from "./commands/remove.ts";
 import { viewCommand } from "./commands/view.ts";
 import { usageError } from "./errors.ts";
 import { formatHelpText } from "./help.ts";
+import type { RunLineStream, RunProcess } from "./runtime/process.ts";
 
 export const commandDefinitions = [
   createCommand,
+  enableCommand,
   startCommand,
   stopCommand,
   restartCommand,
   listCommand,
   viewCommand,
   removeCommand,
+  daemonCommand,
   helpCommand,
 ] as const;
 
 export type Command = ReturnType<(typeof commandDefinitions)[number]["parse"]>;
-export type { RunCommandOptions };
+
+export type RunCommandOptions = {
+  databasePath?: string;
+  runLineStream?: RunLineStream;
+  runProcess?: RunProcess;
+  verbose?: boolean;
+};
+
+export type CliCommand<TKind extends string = string> = {
+  kind: TKind;
+  run(options: RunCommandOptions): Promise<void>;
+};
+
+export type CommandDefinition<TCommand extends CliCommand = CliCommand> = {
+  names: readonly [string, ...string[]];
+  args: readonly string[];
+  options?: readonly string[];
+  description: string;
+  parse(args: string[]): TCommand;
+};
 
 export type ParsedCommand = {
   command: Command;
