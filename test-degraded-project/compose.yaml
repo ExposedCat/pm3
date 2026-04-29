@@ -1,0 +1,24 @@
+services:
+  main:
+    build:
+      context: ./main
+      dockerfile: Containerfile
+    depends_on:
+      delayed-health:
+        condition: service_healthy
+    ports:
+      - "3201:3000"
+
+  delayed-health:
+    image: node:22-alpine
+    command: ["node", "/app/delayed-health.js"]
+    working_dir: /app
+    volumes:
+      - ./delayed-health:/app:ro,Z
+    ports:
+      - "3202:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(1)"]
+      interval: 1s
+      timeout: 1s
+      retries: 3
