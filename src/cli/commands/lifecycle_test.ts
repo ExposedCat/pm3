@@ -31,12 +31,17 @@ Deno.test({
         },
         {
           command: "podman-compose",
-          args: ["stop"],
+          args: ["down", "--remove-orphans"],
           cwd: resolve(workdir),
         },
         {
           command: "podman-compose",
-          args: ["restart"],
+          args: ["down", "--remove-orphans"],
+          cwd: resolve(workdir),
+        },
+        {
+          command: "podman-compose",
+          args: ["up", "-d"],
           cwd: resolve(workdir),
         },
       ]);
@@ -112,7 +117,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "detached lifecycle commands run compose silently in the background",
+  name: "detached lifecycle commands only change lifecycle output",
   sanitizeResources: false,
   async fn() {
     await withTempCli(async ({ databasePath, root }) => {
@@ -120,30 +125,98 @@ Deno.test({
       await Deno.mkdir(workdir);
       await runCli(["create", workdir, "--name", "api"], databasePath);
 
-      const commands: ProcessCommand[] = [];
-      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
-        commands.push(command);
-        return Promise.resolve({
-          code: 0,
-          stderr: "WARN: image uses latest tag",
-        });
-      };
-
-      const output = await runCli(
-        ["start", "--detach", "api"],
-        databasePath,
-        runProcess,
-      );
-
-      assertEquals(output, "");
-      assertEquals(commands, [
+      const scenarios = [
         {
-          command: "podman-compose",
-          args: ["up", "-d"],
-          cwd: resolve(workdir),
-          detached: true,
+          args: ["start", "api"],
+          detachedArgs: ["start", "--detach", "api"],
+          expectedCommands: [["up", "-d"]],
         },
-      ]);
+        {
+          args: ["stop", "api"],
+          detachedArgs: ["stop", "--detach", "api"],
+          expectedCommands: [["down", "--remove-orphans"]],
+        },
+        {
+          args: ["restart", "api"],
+          detachedArgs: ["restart", "--detach", "api"],
+          expectedCommands: [["down", "--remove-orphans"], ["up", "-d"]],
+        },
+        {
+          args: ["start", "--build", "api"],
+          detachedArgs: ["start", "--build", "--detach", "api"],
+          expectedCommands: [["build"], ["up", "-d", "--force-recreate"]],
+        },
+        {
+          args: ["restart", "--build", "api"],
+          detachedArgs: ["restart", "--build", "--detach", "api"],
+          expectedCommands: [
+            ["down", "--remove-orphans"],
+            ["build"],
+            ["up", "-d", "--force-recreate"],
+          ],
+        },
+      ] as const;
+
+      for (const scenario of scenarios) {
+        const regularCommands: ProcessCommand[] = [];
+        const detachedCommands: ProcessCommand[] = [];
+        const runRegularProcess = (
+          command: ProcessCommand,
+        ): Promise<ProcessResult> => {
+          regularCommands.push(command);
+          return Promise.resolve({
+            code: 0,
+            stderr: "WARN: image uses latest tag",
+          });
+        };
+        const runDetachedProcess = (
+          command: ProcessCommand,
+        ): Promise<ProcessResult> => {
+          detachedCommands.push(command);
+          return Promise.resolve({
+            code: 0,
+            stderr: "WARN: image uses latest tag",
+          });
+        };
+
+        const regularOutput = await runCli(
+          [...scenario.args],
+          databasePath,
+          runRegularProcess,
+        );
+        const detachedOutput = await runCli(
+          [...scenario.detachedArgs],
+          databasePath,
+          runDetachedProcess,
+        );
+
+        assertEquals(regularOutput.includes("Finished with 1 warnings"), true);
+        assertEquals(detachedOutput, "");
+        assertEquals(
+          regularCommands.map(({ args, command, cwd }) => ({
+            args,
+            command,
+            cwd,
+          })),
+          scenario.expectedCommands.map((args) => ({
+            command: "podman-compose",
+            args,
+            cwd: resolve(workdir),
+          })),
+        );
+        assertEquals(
+          detachedCommands.map(({ args, command, cwd }) => ({
+            args,
+            command,
+            cwd,
+          })),
+          regularCommands.map(({ args, command, cwd }) => ({
+            args,
+            command,
+            cwd,
+          })),
+        );
+      }
     });
   },
 });
@@ -175,6 +248,11 @@ Deno.test({
         {
           command: "podman-compose",
           args: ["up", "-d", "--force-recreate"],
+          cwd: resolve(workdir),
+        },
+        {
+          command: "podman-compose",
+          args: ["down", "--remove-orphans"],
           cwd: resolve(workdir),
         },
         {
@@ -256,7 +334,6 @@ Deno.test({
           command: "podman-compose",
           args: ["up", "-d", "--force-recreate"],
           cwd: resolve(workdir),
-          detached: true,
         },
       ]);
     });

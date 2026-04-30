@@ -18,7 +18,13 @@ services:
     ports:
       - "3202:3000"
     healthcheck:
-      test: ["CMD", "node", "-e", "process.exit(1)"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs = require('node:fs'); const path = '/tmp/pm3-healthcheck-count'; const count = fs.existsSync(path) ? Number(fs.readFileSync(path, 'utf8')) + 1 : 1; fs.writeFileSync(path, String(count)); process.exit(count >= 2 ? 1 : 0);",
+        ]
       interval: 1s
-      timeout: 1s
+      timeout: 5s
       retries: 3

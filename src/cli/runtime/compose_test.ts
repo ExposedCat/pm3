@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { assert } from "@std/assert/assert";
 import { join } from "@std/path";
 import { runProjectCompose } from "./compose.ts";
@@ -193,7 +193,6 @@ Deno.test({
     await withTempComposeProject(async ({ project }) => {
       for (const [args, status, expected] of [
         [["stop"], "stop", ["Stopping api/web", "Stopped api/web"]],
-        [["restart"], "start", ["Restarting api/web", "Restarted api/web"]],
         [["down"], "remove", ["Removing api/web", "Removed api/web"]],
       ] as const) {
         let emitEvent: ((line: string) => void) | undefined;
@@ -220,6 +219,227 @@ Deno.test({
 
         assertEquals(lines, [...expected]);
       }
+    });
+  },
+});
+
+Deno.test({
+  name: "compose progress checks service health after container start",
+  sanitizeResources: false,
+  async fn() {
+    await withTempComposeProject(async ({ project }) => {
+      let emitEvent: ((line: string) => void) | undefined;
+      const lines = await captureConsoleLog(async () => {
+        await runProjectCompose(project, ["up", "-d"], {
+          runLineStream: (_command, onLine) => {
+            emitEvent = onLine;
+            return Promise.resolve({ stop: () => Promise.resolve() });
+          },
+          runProcess: (command) => {
+            if (isComposeConfigCommand(command)) {
+              return Promise.resolve({ code: 0, stdout: "web\n" });
+            }
+
+            emitEvent?.(composeEvent("start", "web"));
+            emitEvent?.(healthEvent("starting", "web"));
+            emitEvent?.(healthEvent("healthy", "web"));
+            return Promise.resolve({ code: 0 });
+          },
+        });
+      });
+
+      assertEquals(lines, [
+        "Starting api/web",
+        "Started api/web",
+        "    \x1b[33mChecking health\x1b[0m...",
+        "    \x1b[32mHealthy\x1b[0m",
+      ]);
+    });
+  },
+});
+
+Deno.test({
+  name: "compose start fails after final unhealthy health status",
+  sanitizeResources: false,
+  async fn() {
+    await withTempComposeProject(async ({ project }) => {
+      let emitEvent: ((line: string) => void) | undefined;
+      let aborted = false;
+      const commands: ProcessCommand[] = [];
+      const lines = await captureConsoleLog(async () => {
+        await assertRejects(
+          () =>
+            runProjectCompose(project, ["up", "-d"], {
+              runLineStream: (_command, onLine) => {
+                emitEvent = onLine;
+                return Promise.resolve({ stop: () => Promise.resolve() });
+              },
+              runProcess: (command) => {
+                commands.push(command);
+                if (isComposeConfigCommand(command)) {
+                  return Promise.resolve({ code: 0, stdout: "web\n" });
+                }
+                if (
+                  command.args[0] === "--verbose" &&
+                  command.args[1] === "down" &&
+                  command.args[2] === "--remove-orphans"
+                ) {
+                  emitEvent?.(composeEvent("remove", "web"));
+                  return Promise.resolve({ code: 0 });
+                }
+
+                command.signal?.addEventListener("abort", () => {
+                  aborted = true;
+                });
+                emitEvent?.(composeEvent("start", "web"));
+                emitEvent?.(healthEvent("starting", "web"));
+                emitEvent?.(healthEvent("unhealthy", "web"));
+                return Promise.resolve({ code: 0 });
+              },
+            }),
+          Error,
+          "Unhealthy services: api/web",
+        );
+      });
+
+      assertEquals(aborted, true);
+      assertEquals(
+        commands.map(({ args, command }) => ({ args, command })),
+        [
+          { command: "podman-compose", args: ["config", "--services"] },
+          { command: "podman-compose", args: ["--verbose", "up", "-d"] },
+          { command: "podman-compose", args: ["config", "--services"] },
+          {
+            command: "podman-compose",
+            args: ["--verbose", "down", "--remove-orphans"],
+          },
+        ],
+      );
+      assertEquals(lines, [
+        "Starting api/web",
+        "Started api/web",
+        "    \x1b[33mChecking health\x1b[0m...",
+        "    \x1b[31mUnhealthy\x1b[0m",
+        "Stopping api/web",
+        "Stopped api/web",
+      ]);
+    });
+  },
+});
+
+Deno.test({
+  name: "detached compose start keeps unhealthy cleanup flow silent",
+  sanitizeResources: false,
+  async fn() {
+    await withTempComposeProject(async ({ project }) => {
+      let emitEvent: ((line: string) => void) | undefined;
+      let aborted = false;
+      const commands: ProcessCommand[] = [];
+      const lines = await captureConsoleLog(async () => {
+        await assertRejects(
+          () =>
+            runProjectCompose(
+              project,
+              ["up", "-d"],
+              {
+                runLineStream: (_command, onLine) => {
+                  emitEvent = onLine;
+                  return Promise.resolve({ stop: () => Promise.resolve() });
+                },
+                runProcess: (command) => {
+                  commands.push(command);
+                  if (isComposeConfigCommand(command)) {
+                    return Promise.resolve({ code: 0, stdout: "web\n" });
+                  }
+                  if (
+                    command.args[0] === "--verbose" &&
+                    command.args[1] === "down" &&
+                    command.args[2] === "--remove-orphans"
+                  ) {
+                    emitEvent?.(composeEvent("remove", "web"));
+                    return Promise.resolve({ code: 0 });
+                  }
+
+                  command.signal?.addEventListener("abort", () => {
+                    aborted = true;
+                  });
+                  emitEvent?.(composeEvent("start", "web"));
+                  emitEvent?.(healthEvent("starting", "web"));
+                  emitEvent?.(healthEvent("unhealthy", "web"));
+                  return Promise.resolve({ code: 0 });
+                },
+              },
+              { detached: true },
+            ),
+          Error,
+          "Unhealthy services: api/web",
+        );
+      });
+
+      assertEquals(aborted, true);
+      assertEquals(
+        commands.map(({ args, command, detached }) => ({
+          args,
+          command,
+          detached,
+        })),
+        [
+          {
+            command: "podman-compose",
+            args: ["config", "--services"],
+            detached: undefined,
+          },
+          {
+            command: "podman-compose",
+            args: ["--verbose", "up", "-d"],
+            detached: undefined,
+          },
+          {
+            command: "podman-compose",
+            args: ["config", "--services"],
+            detached: undefined,
+          },
+          {
+            command: "podman-compose",
+            args: ["--verbose", "down", "--remove-orphans"],
+            detached: undefined,
+          },
+        ],
+      );
+      assertEquals(lines, []);
+    });
+  },
+});
+
+Deno.test({
+  name: "compose start returns without cleanup after detach signal",
+  sanitizeResources: false,
+  async fn() {
+    await withTempComposeProject(async ({ project }) => {
+      const detachController = new AbortController();
+      let emitEvent: ((line: string) => void) | undefined;
+      const commands: ProcessCommand[] = [];
+
+      await runProjectCompose(project, ["up", "-d"], {
+        detachSignal: detachController.signal,
+        runLineStream: (_command, onLine) => {
+          emitEvent = onLine;
+          return Promise.resolve({ stop: () => Promise.resolve() });
+        },
+        runProcess: (command) => {
+          commands.push(command);
+          if (isComposeConfigCommand(command)) {
+            return Promise.resolve({ code: 0, stdout: "web\n" });
+          }
+
+          emitEvent?.(composeEvent("start", "web"));
+          detachController.abort();
+          return Promise.resolve({ code: 0, detached: true });
+        },
+      });
+
+      assertEquals(commands.length, 2);
+      assertEquals(commands[1]?.detachSignal, detachController.signal);
     });
   },
 });
@@ -315,6 +535,13 @@ function isComposeConfigCommand(command: ProcessCommand): boolean {
 function composeEvent(status: string, service: string): string {
   return JSON.stringify({
     Status: status,
+    Attributes: { "com.docker.compose.service": service },
+  });
+}
+
+function healthEvent(status: string, service: string): string {
+  return JSON.stringify({
+    health_status: status,
     Attributes: { "com.docker.compose.service": service },
   });
 }

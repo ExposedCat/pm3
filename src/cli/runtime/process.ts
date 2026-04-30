@@ -5,8 +5,10 @@ export type ProcessCommand = {
   args: readonly string[];
   cwd: string;
   captureOutput?: boolean;
+  detachSignal?: AbortSignal;
   detached?: boolean;
   onOutput?: (chunk: ProcessOutputChunk) => void;
+  signal?: AbortSignal;
   verbose?: boolean;
 };
 
@@ -17,6 +19,7 @@ export type ProcessOutputChunk = {
 
 export type ProcessResult = {
   code: number;
+  detached?: boolean;
   stdout?: string;
   stderr?: string;
 };
@@ -29,16 +32,27 @@ export async function runSystemProcess(
   const process = new Deno.Command(command.command, {
     args: [...command.args],
     cwd: command.cwd,
-    stdin: command.detached ? "null" : "inherit",
+    stdin: "null",
     stdout: command.detached ? "null" : "piped",
     stderr: command.detached ? "null" : "piped",
   });
 
   const child = process.spawn();
+  const abort = () => {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // The process may have already exited.
+    }
+  };
+  command.signal?.addEventListener("abort", abort, { once: true });
   if (command.detached) {
     child.unref();
+    command.signal?.removeEventListener("abort", abort);
     return { code: 0 };
   }
+  const detach = () => child.unref();
+  command.detachSignal?.addEventListener("abort", detach, { once: true });
 
   const [status, stdout, stderr] = await Promise.all([
     child.status,
@@ -49,6 +63,7 @@ export async function runSystemProcess(
         : undefined,
       command.verbose && !command.captureOutput ? Deno.stdout : undefined,
       command.captureOutput ? undefined : PROCESS_OUTPUT_TAIL_LIMIT,
+      command.detachSignal,
     ),
     collectOutput(
       child.stderr,
@@ -57,11 +72,16 @@ export async function runSystemProcess(
         : undefined,
       command.verbose && !command.captureOutput ? Deno.stderr : undefined,
       command.captureOutput ? undefined : PROCESS_OUTPUT_TAIL_LIMIT,
+      command.detachSignal,
     ),
-  ]);
+  ]).finally(() => {
+    command.signal?.removeEventListener("abort", abort);
+    command.detachSignal?.removeEventListener("abort", detach);
+  });
 
   return {
     code: status.code,
+    detached: command.detachSignal?.aborted || undefined,
     stdout: stdout.trimEnd(),
     stderr: stderr.trimEnd(),
   };
@@ -72,20 +92,31 @@ async function collectOutput(
   onOutput?: (text: string) => void,
   writer?: Pick<typeof Deno.stdout, "write">,
   tailLimit?: number,
+  stopSignal?: AbortSignal,
 ): Promise<string> {
   const streamDecoder = new TextDecoder();
   const chunks: Uint8Array[] = [];
   let output = "";
+  const reader = stream.getReader();
 
-  for await (const chunk of stream) {
-    const text = streamDecoder.decode(chunk, { stream: true });
-    onOutput?.(text);
-    if (tailLimit === undefined) {
-      chunks.push(chunk);
-    } else {
-      output = `${output}${text}`.slice(-tailLimit);
+  try {
+    while (!stopSignal?.aborted) {
+      const result = await readChunk(reader, stopSignal);
+      if (!result || result.done) {
+        break;
+      }
+
+      const text = streamDecoder.decode(result.value, { stream: true });
+      onOutput?.(text);
+      if (tailLimit === undefined) {
+        chunks.push(result.value);
+      } else {
+        output = `${output}${text}`.slice(-tailLimit);
+      }
+      await writer?.write(result.value);
     }
-    await writer?.write(chunk);
+  } finally {
+    reader.releaseLock();
   }
 
   const remaining = streamDecoder.decode();
@@ -102,6 +133,32 @@ async function collectOutput(
   }
 
   return new TextDecoder().decode(concatChunks(chunks));
+}
+
+function readChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  stopSignal: AbortSignal | undefined,
+): Promise<ReadableStreamReadResult<Uint8Array> | undefined> {
+  if (!stopSignal) {
+    return reader.read();
+  }
+
+  if (stopSignal.aborted) {
+    return Promise.resolve(undefined);
+  }
+
+  return Promise.race([
+    reader.read(),
+    new Promise<undefined>((resolve) => {
+      stopSignal.addEventListener(
+        "abort",
+        () => {
+          void reader.cancel().finally(() => resolve(undefined));
+        },
+        { once: true },
+      );
+    }),
+  ]);
 }
 
 function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {

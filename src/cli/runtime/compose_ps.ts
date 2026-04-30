@@ -1,7 +1,11 @@
+import type { ProjectComposeHealthStatus } from "./compose_events.ts";
+
 export type ProjectComposeContainer = {
+  id: string;
   service: string;
   state: string;
   status: string;
+  healthStatus: ProjectComposeHealthStatus | "";
   createdAt: number;
   startedAt: number;
   exitedAt: number;
@@ -9,6 +13,8 @@ export type ProjectComposeContainer = {
 };
 
 type PodmanComposeContainer = {
+  Id?: string;
+  ID?: string;
   Labels?: Record<string, string>;
   State?: string;
   Status?: string;
@@ -36,9 +42,11 @@ export function parseComposeContainerJson(
   const containers = JSON.parse(output) as PodmanComposeContainer[];
 
   return containers.map((container) => ({
+    id: container.Id ?? container.ID ?? "",
     service: getComposeContainerService(container),
     state: container.State ?? "",
     status: container.Status ?? "",
+    healthStatus: parseComposeContainerHealthStatus(container.Status ?? ""),
     createdAt: container.Created ?? 0,
     startedAt: container.StartedAt ?? 0,
     exitedAt: container.ExitedAt ?? 0,
@@ -93,4 +101,26 @@ function formatPortRange(
   }
 
   return `${start}-${start + range - 1}`;
+}
+
+function parseComposeContainerHealthStatus(
+  status: string,
+): ProjectComposeHealthStatus | "" {
+  const health = status
+    .match(/\((health:\s*)?(starting|healthy|unhealthy)\)/i)?.[2]
+    ?.toLowerCase();
+
+  if (health === "starting") {
+    return "pending";
+  }
+
+  if (health === "healthy") {
+    return "healthy";
+  }
+
+  if (health === "unhealthy") {
+    return "degraded";
+  }
+
+  return "";
 }

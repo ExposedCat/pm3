@@ -16,7 +16,7 @@ async function collectTsFiles(root: string): Promise<string[]> {
   for await (const entry of Deno.readDir(root)) {
     const path = `${root}/${entry.name}`;
     if (entry.isDirectory) {
-      files.push(...await collectTsFiles(path));
+      files.push(...(await collectTsFiles(path)));
       continue;
     }
 

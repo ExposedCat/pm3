@@ -156,6 +156,6 @@ async function runLifecycleCommand(
       return;
     }
 
-    await stopProject(project, options);
+    await stopProject(project, options, { detached: command.detach });
   });
 }

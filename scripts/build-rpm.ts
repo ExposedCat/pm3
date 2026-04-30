@@ -13,14 +13,11 @@ await Deno.mkdir(join(rpmRoot, "SPECS"), { recursive: true });
 await Deno.mkdir(join(rpmRoot, "SRPMS"), { recursive: true });
 await Deno.mkdir(packageRoot, { recursive: true });
 
-await run("tar", [
-  "--exclude-vcs",
-  "--exclude=./dist",
-  "--exclude=./.github",
-  "-cf",
-  "-",
-  ".",
-], { stdout: "piped" }).then(async (tar) => {
+await run(
+  "tar",
+  ["--exclude-vcs", "--exclude=./dist", "--exclude=./.github", "-cf", "-", "."],
+  { stdout: "piped" },
+).then(async (tar) => {
   const extract = new Deno.Command("tar", {
     args: ["-xf", "-", "-C", packageRoot],
     stdin: "piped",
@@ -44,7 +41,10 @@ await run("tar", [
 ]);
 await Deno.copyFile("dist/pm3", join(rpmRoot, "SOURCES", "pm3-linux-x86_64"));
 await Deno.chmod(join(rpmRoot, "SOURCES", "pm3-linux-x86_64"), 0o755);
-await Deno.copyFile("packaging/pm3.service", join(rpmRoot, "SOURCES", "pm3.service"));
+await Deno.copyFile(
+  "packaging/pm3.service",
+  join(rpmRoot, "SOURCES", "pm3.service"),
+);
 
 const spec = await Deno.readTextFile("pm3.spec");
 await Deno.writeTextFile(

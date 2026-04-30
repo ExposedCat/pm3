@@ -112,7 +112,12 @@ function getProjectState(
     return "up";
   }
 
-  if (states.every((state) => state === "exited" || state === "stopped")) {
+  if (
+    states.every(
+      (state) =>
+        state === "created" || state === "exited" || state === "stopped",
+    )
+  ) {
     return "down";
   }
 

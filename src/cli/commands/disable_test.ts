@@ -95,7 +95,7 @@ Deno.test({
       assertEquals(commands, [
         {
           command: "podman-compose",
-          args: ["stop"],
+          args: ["down", "--remove-orphans"],
           cwd: resolve(workdir),
         },
       ]);

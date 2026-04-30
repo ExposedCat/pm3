@@ -49,13 +49,82 @@ Deno.test({
           command: "podman-compose",
           args: ["up", "-d"],
           cwd: resolve(alphaWorkdir),
-          detached: true,
         },
         {
           command: "podman-compose",
           args: ["up", "-d"],
           cwd: resolve(zetaWorkdir),
-          detached: true,
+        },
+      ]);
+    });
+  },
+});
+
+Deno.test({
+  name: "daemon starts only enabled down projects on startup",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const apiWorkdir = join(root, "api");
+      const workerWorkdir = join(root, "worker");
+      await Deno.mkdir(apiWorkdir);
+      await Deno.mkdir(workerWorkdir);
+      await Deno.writeTextFile(
+        join(apiWorkdir, "compose.yaml"),
+        "services: {}\n",
+      );
+      await Deno.writeTextFile(
+        join(workerWorkdir, "compose.yaml"),
+        "services: {}\n",
+      );
+      await runCli(["create", apiWorkdir, "--name", "api"], databasePath);
+      await runCli(["create", workerWorkdir, "--name", "worker"], databasePath);
+      await runCli(["enable", "api"], databasePath);
+      await runCli(["enable", "worker"], databasePath);
+
+      const commands: ProcessCommand[] = [];
+      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
+        commands.push(command);
+        if (command.args[0] === "ps") {
+          return Promise.resolve({
+            code: 0,
+            stdout: JSON.stringify([
+              {
+                State:
+                  command.cwd === resolve(apiWorkdir) ? "running" : "exited",
+              },
+            ]),
+          });
+        }
+
+        return Promise.resolve({ code: 0 });
+      };
+
+      await withDaemonDatabase(databasePath, async (db) => {
+        await runDaemon(
+          db,
+          { databasePath, runProcess },
+          { wait: () => Promise.resolve() },
+        );
+      });
+
+      assertEquals(commands, [
+        {
+          command: "podman-compose",
+          args: ["ps", "--format", "json"],
+          cwd: resolve(apiWorkdir),
+          captureOutput: true,
+        },
+        {
+          command: "podman-compose",
+          args: ["ps", "--format", "json"],
+          cwd: resolve(workerWorkdir),
+          captureOutput: true,
+        },
+        {
+          command: "podman-compose",
+          args: ["up", "-d"],
+          cwd: resolve(workerWorkdir),
         },
       ]);
     });
@@ -100,7 +169,6 @@ Deno.test({
           command: "podman-compose",
           args: ["up", "-d"],
           cwd: resolve(apiWorkdir),
-          detached: true,
         },
       ]);
     });
@@ -148,7 +216,6 @@ Deno.test({
           command: "podman-compose",
           args: ["up", "-d"],
           cwd: resolve(apiWorkdir),
-          detached: true,
         },
       ]);
     });
@@ -188,7 +255,6 @@ Deno.test({
           command: "podman-compose",
           args: ["up", "-d"],
           cwd: resolve(apiWorkdir),
-          detached: true,
         },
       ]);
     });
@@ -227,7 +293,6 @@ Deno.test({
           command: "podman-compose",
           args: ["up", "-d"],
           cwd: resolve(apiWorkdir),
-          detached: true,
         },
       ]);
     });
@@ -304,6 +369,296 @@ Deno.test({
         "disabled/worker healthy",
       ]);
       assertEquals(stopped, true);
+    });
+  },
+});
+
+Deno.test({
+  name: "daemon logs compose health from startup progress",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const apiWorkdir = join(root, "api");
+      await Deno.mkdir(apiWorkdir);
+      await Deno.writeTextFile(
+        join(apiWorkdir, "compose.yaml"),
+        "services: {}\n",
+      );
+      await runCli(["create", apiWorkdir, "--name", "api"], databasePath);
+      await runCli(["enable", "api"], databasePath);
+
+      let startupEvents: ((line: string) => void) | undefined;
+      const lines = await captureConsoleLog(async () => {
+        await withDaemonDatabase(databasePath, async (db) => {
+          await runDaemon(
+            db,
+            {
+              databasePath,
+              runLineStream: (command, onLine) => {
+                if (
+                  command.args.includes(
+                    `label=com.docker.compose.project.working_dir=${apiWorkdir}`,
+                  )
+                ) {
+                  startupEvents = onLine;
+                }
+
+                return Promise.resolve({ stop: () => Promise.resolve() });
+              },
+              runProcess: (command) => {
+                if (command.args[0] === "ps") {
+                  return Promise.resolve({ code: 0, stdout: "[]" });
+                }
+
+                if (command.args[0] === "config") {
+                  return Promise.resolve({ code: 0, stdout: "web\n" });
+                }
+
+                startupEvents?.(composeEvent("start", "web"));
+                startupEvents?.(healthEvent("healthy", "web", apiWorkdir));
+                return Promise.resolve({ code: 0 });
+              },
+            },
+            { wait: () => Promise.resolve() },
+          );
+        });
+      });
+
+      assertEquals(lines, ["Starting PM3 Daemon...", "api/web healthy"]);
+    });
+  },
+});
+
+Deno.test({
+  name: "daemon does not log unchanged compose health after restart",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const apiWorkdir = join(root, "api");
+      await Deno.mkdir(apiWorkdir);
+      await Deno.writeTextFile(
+        join(apiWorkdir, "compose.yaml"),
+        "services: {}\n",
+      );
+      await runCli(["create", apiWorkdir, "--name", "api"], databasePath);
+      await runCli(["enable", "api"], databasePath);
+
+      let emitEvent: ((line: string) => void) | undefined;
+      const lines = await captureConsoleLog(async () => {
+        await withDaemonDatabase(databasePath, async (db) => {
+          await runDaemon(
+            db,
+            {
+              databasePath,
+              runLineStream: (_command, onLine) => {
+                emitEvent = onLine;
+                return Promise.resolve({ stop: () => Promise.resolve() });
+              },
+              runProcess: (command) => {
+                if (command.args[0] === "ps") {
+                  return Promise.resolve({
+                    code: 0,
+                    stdout: JSON.stringify([
+                      {
+                        Labels: {
+                          "com.docker.compose.service": "web",
+                        },
+                        Status: "Up 1 minute (healthy)",
+                      },
+                    ]),
+                  });
+                }
+
+                return Promise.resolve({ code: 0 });
+              },
+            },
+            {
+              wait() {
+                emitEvent?.(healthEvent("healthy", "web", apiWorkdir));
+                emitEvent?.(healthEvent("unhealthy", "web", apiWorkdir));
+                return Promise.resolve();
+              },
+            },
+          );
+        });
+      });
+
+      assertEquals(lines, ["Starting PM3 Daemon...", "api/web degraded"]);
+    });
+  },
+});
+
+Deno.test({
+  name: "daemon periodically logs changed compose health",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const apiWorkdir = join(root, "api");
+      await Deno.mkdir(apiWorkdir);
+      await Deno.writeTextFile(
+        join(apiWorkdir, "compose.yaml"),
+        "services: {}\n",
+      );
+      await runCli(["create", apiWorkdir, "--name", "api"], databasePath);
+      await runCli(["enable", "api"], databasePath);
+
+      let psCalls = 0;
+      const lines = await captureConsoleLog(async () => {
+        await withDaemonDatabase(databasePath, async (db) => {
+          await runDaemon(
+            db,
+            {
+              databasePath,
+              runProcess: (command) => {
+                if (command.args[0] !== "ps") {
+                  return Promise.resolve({ code: 0 });
+                }
+
+                psCalls += 1;
+                return Promise.resolve({
+                  code: 0,
+                  stdout: JSON.stringify([
+                    {
+                      Labels: {
+                        "com.docker.compose.service": "web",
+                      },
+                      State: "running",
+                      Status:
+                        psCalls === 1
+                          ? "Up 1 minute (healthy)"
+                          : "Up 1 minute (unhealthy)",
+                    },
+                  ]),
+                });
+              },
+            },
+            {
+              reconcileIntervalMs: 1,
+              async wait() {
+                await delay(20);
+              },
+            },
+          );
+        });
+      });
+
+      assertEquals(lines, ["Starting PM3 Daemon...", "api/web degraded"]);
+    });
+  },
+});
+
+Deno.test({
+  name: "daemon periodically logs newly discovered compose health",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const apiWorkdir = join(root, "api");
+      await Deno.mkdir(apiWorkdir);
+      await Deno.writeTextFile(
+        join(apiWorkdir, "compose.yaml"),
+        "services: {}\n",
+      );
+      await runCli(["create", apiWorkdir, "--name", "api"], databasePath);
+      await runCli(["enable", "api"], databasePath);
+
+      let psCalls = 0;
+      const lines = await captureConsoleLog(async () => {
+        await withDaemonDatabase(databasePath, async (db) => {
+          await runDaemon(
+            db,
+            {
+              databasePath,
+              runProcess: (command) => {
+                if (command.args[0] !== "ps") {
+                  return Promise.resolve({ code: 0 });
+                }
+
+                psCalls += 1;
+                return Promise.resolve({
+                  code: 0,
+                  stdout:
+                    psCalls === 1
+                      ? "[]"
+                      : JSON.stringify([
+                          {
+                            Labels: {
+                              "com.docker.compose.service": "web",
+                            },
+                            State: "running",
+                            Status: "Up 1 minute (healthy)",
+                          },
+                        ]),
+                });
+              },
+            },
+            {
+              reconcileIntervalMs: 1,
+              async wait() {
+                await delay(20);
+              },
+            },
+          );
+        });
+      });
+
+      assertEquals(lines, ["Starting PM3 Daemon...", "api/web healthy"]);
+    });
+  },
+});
+
+Deno.test({
+  name: "daemon periodically logs unchanged health for replaced containers",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const apiWorkdir = join(root, "api");
+      await Deno.mkdir(apiWorkdir);
+      await Deno.writeTextFile(
+        join(apiWorkdir, "compose.yaml"),
+        "services: {}\n",
+      );
+      await runCli(["create", apiWorkdir, "--name", "api"], databasePath);
+      await runCli(["enable", "api"], databasePath);
+
+      let psCalls = 0;
+      const lines = await captureConsoleLog(async () => {
+        await withDaemonDatabase(databasePath, async (db) => {
+          await runDaemon(
+            db,
+            {
+              databasePath,
+              runProcess: (command) => {
+                if (command.args[0] !== "ps") {
+                  return Promise.resolve({ code: 0 });
+                }
+
+                psCalls += 1;
+                return Promise.resolve({
+                  code: 0,
+                  stdout: JSON.stringify([
+                    {
+                      Id: psCalls === 1 ? "old-container" : "new-container",
+                      Labels: {
+                        "com.docker.compose.service": "web",
+                      },
+                      State: "running",
+                      Status: "Up 1 minute (healthy)",
+                    },
+                  ]),
+                });
+              },
+            },
+            {
+              reconcileIntervalMs: 1,
+              async wait() {
+                await delay(20);
+              },
+            },
+          );
+        });
+      });
+
+      assertEquals(lines, ["Starting PM3 Daemon...", "api/web healthy"]);
     });
   },
 });
@@ -403,6 +758,13 @@ function healthEvent(
       "com.docker.compose.project.working_dir": workingDir,
       "com.docker.compose.service": service,
     },
+  });
+}
+
+function composeEvent(status: string, service: string): string {
+  return JSON.stringify({
+    Status: status,
+    Attributes: { "com.docker.compose.service": service },
   });
 }
 

@@ -33,8 +33,10 @@ export type Command = ReturnType<(typeof commandDefinitions)[number]["parse"]>;
 
 export type RunCommandOptions = {
   databasePath?: string;
+  detachSignal?: AbortSignal;
   runLineStream?: RunLineStream;
   runProcess?: RunProcess;
+  signal?: AbortSignal;
   verbose?: boolean;
 };
 

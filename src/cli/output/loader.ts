@@ -3,6 +3,7 @@ const LOADER_FRAMES = ["-", "\\", "|", "/"] as const;
 export type Loader = {
   finishLine(line: string, finishedLine: string): void;
   startLine(line: string): void;
+  startLineAfter(parentLine: string, line: string): void;
   stop(): void;
   writeLineAfter(parentLine: string, line: string): void;
 };
@@ -12,9 +13,15 @@ export function startLoader(
   options: { enabled: boolean },
 ): Loader {
   if (!options.enabled || !isTerminal(Deno.stdout)) {
+    const childLines = new Set<string>();
     return {
-      finishLine: (_line, finishedLine) => console.log(finishedLine),
+      finishLine: (line, finishedLine) =>
+        console.log(`${childLines.has(line) ? "    " : ""}${finishedLine}`),
       startLine: (line) => console.log(line),
+      startLineAfter: (_parentLine, line) => {
+        childLines.add(line);
+        console.log(`    ${line}...`);
+      },
       stop: () => {},
       writeLineAfter: (_parentLine, line) => console.log(`    ${line}`),
     };
@@ -22,7 +29,7 @@ export function startLoader(
 
   let index = 0;
   let renderedRowCount = 0;
-  const lines: { active: boolean; label: string }[] = [];
+  const lines: { active: boolean; indent: string; label: string }[] = [];
   const encoder = new TextEncoder();
   const render = () => {
     const frame = LOADER_FRAMES[index % LOADER_FRAMES.length];
@@ -35,7 +42,9 @@ export function startLoader(
     const renderedLines =
       lines.length > 0
         ? lines.map((line) =>
-            line.active ? `${frame} ${line.label}...` : `  ${line.label}`,
+            line.active
+              ? `${frame} ${line.indent}${line.label}...`
+              : `  ${line.indent}${line.label}`,
           )
         : [`${frame} ${label}...`];
 
@@ -67,9 +76,23 @@ export function startLoader(
     },
     startLine(lineLabel: string) {
       if (!lines.some((line) => line.label === lineLabel)) {
-        lines.push({ active: true, label: lineLabel });
+        lines.push({ active: true, indent: "", label: lineLabel });
         render();
       }
+    },
+    startLineAfter(parentLine: string, lineLabel: string) {
+      if (lines.some((line) => line.label === lineLabel)) {
+        return;
+      }
+
+      const parentIndex = lines.findIndex((line) => line.label === parentLine);
+      const insertIndex = parentIndex === -1 ? lines.length : parentIndex + 1;
+      lines.splice(insertIndex, 0, {
+        active: true,
+        indent: "  ",
+        label: lineLabel,
+      });
+      render();
     },
     stop() {
       clearInterval(timer);
@@ -92,7 +115,11 @@ export function startLoader(
 
       const parentIndex = lines.findIndex((line) => line.label === parentLine);
       const insertIndex = parentIndex === -1 ? lines.length : parentIndex + 1;
-      lines.splice(insertIndex, 0, { active: false, label: `  ${lineLabel}` });
+      lines.splice(insertIndex, 0, {
+        active: false,
+        indent: "  ",
+        label: lineLabel,
+      });
       render();
     },
   };

@@ -1,7 +1,8 @@
 import type { RunCommandOptions } from "../commands.ts";
-import { yellow } from "../output/color.ts";
+import { green, red, yellow } from "../output/color.ts";
 import {
   getComposeEventService,
+  getComposeHealthStatus,
   type PodmanEvent,
   parsePodmanEvent,
 } from "./compose_events.ts";
@@ -19,16 +20,16 @@ export function getComposeOperation(args: readonly string[]): string {
     return "Building";
   }
 
+  if (isComposeStopOperation(args)) {
+    return "Stopping";
+  }
+
   if (args.includes("down")) {
     return "Removing";
   }
 
   if (args.includes("stop")) {
     return "Stopping";
-  }
-
-  if (args.includes("restart")) {
-    return "Restarting";
   }
 
   return "Starting";
@@ -38,6 +39,7 @@ type ComposeOperation = ReturnType<typeof getComposeOperation>;
 
 export type ComposeProgress = {
   captureComposeCommands: boolean;
+  unhealthyServices(): readonly string[];
   shownNoticeCount(): number;
   stop(): Promise<void>;
   writeComposeOutput(text: string): void;
@@ -46,6 +48,7 @@ export type ComposeProgress = {
 export function createEmptyComposeProgress(): ComposeProgress {
   return {
     captureComposeCommands: false,
+    unhealthyServices: () => [],
     shownNoticeCount: () => 0,
     stop: () => Promise.resolve(),
     writeComposeOutput: () => {},
@@ -57,6 +60,7 @@ export async function startComposeProgress(
   operation: ComposeOperation,
   options: RunCommandOptions,
   output: ComposeOutput,
+  progressOptions: ComposeProgressOptions = {},
 ): Promise<ComposeProgress> {
   if (
     operation === "Building" ||
@@ -73,6 +77,8 @@ export async function startComposeProgress(
   }
 
   const finished = new Set<string>();
+  const healthStarted = new Set<string>();
+  const unhealthy = new Set<string>();
   const started = new Set<string>();
   const serviceNames = new Set(services);
   for (const service of services) {
@@ -104,12 +110,26 @@ export async function startComposeProgress(
     },
     (line) => {
       const event = parsePodmanEvent(line);
-      if (!isComposeServiceEventComplete(operation, event)) {
+      const service = getComposeEventService(event);
+      if (!service || !serviceNames.has(service)) {
         return;
       }
 
-      const service = getComposeEventService(event);
-      if (!service || !serviceNames.has(service) || finished.has(service)) {
+      if (isComposeServiceEventComplete(operation, event)) {
+        finishComposeProgress(
+          project.name,
+          operation,
+          finished,
+          started,
+          service,
+          output,
+        );
+      }
+
+      const healthStatus = shouldTrackComposeHealth(operation)
+        ? getComposeHealthStatus(event)
+        : "";
+      if (!healthStatus) {
         return;
       }
 
@@ -121,6 +141,19 @@ export async function startComposeProgress(
         service,
         output,
       );
+      updateComposeHealthProgress(
+        project.name,
+        getFinishedComposeOperation(operation),
+        healthStarted,
+        unhealthy,
+        service,
+        healthStatus,
+        output,
+      );
+      progressOptions.onHealthChange?.(service, healthStatus);
+      if (healthStatus === "degraded") {
+        progressOptions.onUnhealthy?.(service);
+      }
     },
   );
   let composeOutput = "";
@@ -129,6 +162,7 @@ export async function startComposeProgress(
 
   return {
     captureComposeCommands: !options.verbose,
+    unhealthyServices: () => [...unhealthy],
     shownNoticeCount: () => shownNoticeCount,
     async stop() {
       await delay(EVENT_STREAM_STOP_GRACE_MS);
@@ -181,6 +215,14 @@ export async function startComposeProgress(
   };
 }
 
+type ComposeProgressOptions = {
+  onHealthChange?: (
+    service: string,
+    status: "pending" | "healthy" | "degraded",
+  ) => void;
+  onUnhealthy?: (service: string) => void;
+};
+
 function isComposeServiceEventComplete(
   operation: ComposeOperation,
   event: PodmanEvent | undefined,
@@ -192,10 +234,23 @@ function isComposeServiceEventComplete(
   }
 
   if (operation === "Stopping") {
-    return status === "stop" || status === "died";
+    return status === "stop" || status === "died" || status === "remove";
   }
 
   return status === "start";
+}
+
+function isComposeStopOperation(args: readonly string[]): boolean {
+  return (
+    args[0] === "down" &&
+    args.includes("--remove-orphans") &&
+    !args.includes("--volumes") &&
+    !args.includes("--rmi")
+  );
+}
+
+function shouldTrackComposeHealth(operation: ComposeOperation): boolean {
+  return operation === "Starting";
 }
 
 function getComposeCommandService(
@@ -216,7 +271,7 @@ function getComposeCommandService(
 function getPodmanCommandsForOperation(
   operation: ComposeOperation,
 ): readonly string[] {
-  if (operation === "Starting" || operation === "Restarting") {
+  if (operation === "Starting") {
     return ["start"];
   }
 
@@ -273,12 +328,60 @@ function finishComposeProgress(
   output.finishLine(line, finishedLine);
 }
 
+function updateComposeHealthProgress(
+  projectName: string,
+  parentOperation: string,
+  started: Set<string>,
+  unhealthy: Set<string>,
+  service: string,
+  status: "pending" | "healthy" | "degraded",
+  output: ComposeOutput,
+): void {
+  const line = formatComposeHealthPendingLine();
+  if (!started.has(service)) {
+    started.add(service);
+    output.startLineAfter(
+      formatComposeProgressLine(projectName, parentOperation, service),
+      line,
+    );
+  }
+
+  if (status === "pending") {
+    return;
+  }
+
+  const finishedLine = formatComposeHealthFinishedLine(status);
+  output.finishLine(line, finishedLine);
+
+  if (status === "degraded") {
+    unhealthy.add(service);
+  }
+}
+
 function formatComposeProgressLine(
   projectName: string,
   operation: string,
   service: string,
 ): string {
   return `${operation} ${projectName}/${service}`;
+}
+
+function formatComposeHealthPendingLine(): string {
+  return yellow("Checking health");
+}
+
+function formatComposeHealthFinishedLine(
+  status: "pending" | "healthy" | "degraded",
+): string {
+  if (status === "healthy") {
+    return green("Healthy");
+  }
+
+  if (status === "degraded") {
+    return red("Unhealthy");
+  }
+
+  return formatComposeHealthPendingLine();
 }
 
 function getFinishedComposeOperation(operation: ComposeOperation): string {
@@ -288,10 +391,6 @@ function getFinishedComposeOperation(operation: ComposeOperation): string {
 
   if (operation === "Stopping") {
     return "Stopped";
-  }
-
-  if (operation === "Restarting") {
-    return "Restarted";
   }
 
   if (operation === "Removing") {
@@ -360,6 +459,7 @@ function unescapeLogfmtQuotedValue(value: string): string {
 
 type ComposeOutput = {
   finishLine(line: string, finishedLine: string): void;
+  startLineAfter(parentLine: string, line: string): void;
   startLine(line: string): void;
   writeLineAfter(parentLine: string, line: string): void;
 };

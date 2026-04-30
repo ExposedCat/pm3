@@ -13,9 +13,7 @@ type DenoConfig = {
 };
 
 async function readCurrentVersion(): Promise<string> {
-  const config = JSON.parse(
-    await Deno.readTextFile("deno.json"),
-  ) as DenoConfig;
+  const config = JSON.parse(await Deno.readTextFile("deno.json")) as DenoConfig;
 
   return config.version ?? "";
 }

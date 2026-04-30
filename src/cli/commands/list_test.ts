@@ -152,6 +152,34 @@ Deno.test({
 });
 
 Deno.test({
+  name: "list prints down when compose containers are only created or stopped",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const apiDir = join(root, "api");
+      await Deno.mkdir(apiDir);
+      await Deno.writeTextFile(join(apiDir, "compose.yaml"), "services: {}\n");
+      await runCli(["create", apiDir, "--name", "api"], databasePath);
+
+      const output = await runCli(["list"], databasePath, () =>
+        Promise.resolve({
+          code: 0,
+          stdout: JSON.stringify([
+            { State: "created", Status: "Created" },
+            { State: "exited", Status: "Exited (0) 1 minute ago" },
+          ]),
+        }),
+      );
+
+      assertEquals(
+        output,
+        ["NAME  STATE", "api   \x1b[31mdown\x1b[0m"].join("\n"),
+      );
+    });
+  },
+});
+
+Deno.test({
   name: "detailed list omits duration for pending projects",
   sanitizeResources: false,
   async fn() {

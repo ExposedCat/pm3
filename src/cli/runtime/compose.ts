@@ -5,9 +5,9 @@ import {
   getComposeEventService,
   getComposeEventWorkingDir,
   getComposeHealthStatus,
+  parsePodmanEvent,
   type ProjectComposeHealthChange,
   type ProjectComposeHealthStatus,
-  parsePodmanEvent,
 } from "./compose_events.ts";
 import {
   hasComposeFile,
@@ -20,8 +20,8 @@ import {
   startComposeProgress,
 } from "./compose_progress.ts";
 import {
-  type ProjectComposeContainer,
   parseComposeContainerJson,
+  type ProjectComposeContainer,
 } from "./compose_ps.ts";
 import type { ProcessCommand } from "./process.ts";
 
@@ -30,6 +30,8 @@ export type {
   ProjectComposeHealthChange,
   ProjectComposeHealthStatus,
 };
+
+export const STOP_COMPOSE_ARGS = ["down", "--remove-orphans"] as const;
 
 type ComposeProject = {
   name: string;
@@ -48,25 +50,53 @@ export async function runProjectCompose(
   const loader = startLoader(`${operation} ${project.name}`, {
     enabled: !options.verbose && !runOptions.detached,
   });
+  const output = runOptions.detached
+    ? createSilentComposeOutput()
+    : {
+        finishLine: loader.finishLine,
+        startLineAfter: loader.startLineAfter,
+        writeLineAfter: loader.writeLineAfter,
+        startLine: loader.startLine,
+      };
   let progress = createEmptyComposeProgress();
+  const healthAbortController = new AbortController();
+  const abortSignal = combineAbortSignals(
+    options.signal,
+    healthAbortController.signal,
+  );
 
   const result = await (async () => {
     try {
-      progress = runOptions.detached
-        ? createEmptyComposeProgress()
-        : await startComposeProgress(project, operation, options, {
-            finishLine: loader.finishLine,
-            writeLineAfter: loader.writeLineAfter,
-            startLine: loader.startLine,
-          });
+      progress = await startComposeProgress(
+        project,
+        operation,
+        options,
+        output,
+        {
+          onHealthChange: (service, status) =>
+            runOptions.onHealthChange?.({
+              project: project.name,
+              service,
+              status,
+            }),
+          onUnhealthy: () => healthAbortController.abort(),
+        },
+      );
 
       const command: ProcessCommand = {
         command: PODMAN_COMPOSE_COMMAND,
         args: progress.captureComposeCommands ? ["--verbose", ...args] : args,
         cwd: project.workingDir,
       };
-      if (runOptions.detached) {
-        command.detached = true;
+      const canAbortUnhealthy =
+        isHealthTrackedOperation(operation) &&
+        (!options.runProcess || options.runLineStream);
+      const canDetach = isHealthTrackedOperation(operation);
+      if (canAbortUnhealthy || options.signal) {
+        command.signal = abortSignal;
+      }
+      if (canDetach && options.detachSignal) {
+        command.detachSignal = options.detachSignal;
       }
       if (progress.captureComposeCommands) {
         command.onOutput = ({ text }) => progress.writeComposeOutput(text);
@@ -82,16 +112,40 @@ export async function runProjectCompose(
     }
   })();
 
-  if (result.code !== 0) {
-    throw inputError(formatComposeFailure(result));
-  }
-
-  if (runOptions.detached) {
+  if (result.detached) {
     return;
   }
 
+  if (result.code !== 0) {
+    const unhealthyServices = progress.unhealthyServices();
+    if (unhealthyServices.length > 0) {
+      await stopStartedComposeServices(project, options, {
+        detached: runOptions.detached,
+      });
+      throw inputError(
+        formatUnhealthyServices(project.name, unhealthyServices),
+      );
+    }
+
+    if (options.signal?.aborted && isHealthTrackedOperation(operation)) {
+      await stopStartedComposeServices(project, options, {
+        detached: runOptions.detached,
+      });
+    }
+
+    throw inputError(formatComposeFailure(result));
+  }
+
+  const unhealthyServices = progress.unhealthyServices();
+  if (unhealthyServices.length > 0) {
+    await stopStartedComposeServices(project, options, {
+      detached: runOptions.detached,
+    });
+    throw inputError(formatUnhealthyServices(project.name, unhealthyServices));
+  }
+
   const warnings = countWarnings(result);
-  if (warnings > progress.shownNoticeCount()) {
+  if (!runOptions.detached && warnings > progress.shownNoticeCount()) {
     console.log(`Finished with ${warnings} warnings`);
   }
 }
@@ -115,6 +169,7 @@ export async function removeProjectComposeArtifacts(
 
 export type ProjectComposeRunOptions = {
   detached?: boolean;
+  onHealthChange?: (change: ProjectComposeHealthChange) => void;
 };
 
 export async function listProjectComposeContainers(
@@ -198,6 +253,72 @@ function findComposeProject(
 
 function formatComposeFailure(result: { stdout?: string; stderr?: string }) {
   return result.stderr || result.stdout || `${PODMAN_COMPOSE_COMMAND} failed`;
+}
+
+function isHealthTrackedOperation(operation: string): boolean {
+  return operation === "Starting";
+}
+
+function createSilentComposeOutput() {
+  return {
+    finishLine: () => {},
+    startLineAfter: () => {},
+    startLine: () => {},
+    writeLineAfter: () => {},
+  };
+}
+
+function combineAbortSignals(
+  ...signals: (AbortSignal | undefined)[]
+): AbortSignal | undefined {
+  const activeSignals = signals.filter((signal) => signal !== undefined);
+  if (activeSignals.length === 0) {
+    return undefined;
+  }
+
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      abort();
+      break;
+    }
+
+    signal.addEventListener("abort", abort, { once: true });
+    controller.signal.addEventListener(
+      "abort",
+      () => signal.removeEventListener("abort", abort),
+      { once: true },
+    );
+  }
+
+  return controller.signal;
+}
+
+async function stopStartedComposeServices(
+  project: ComposeProject,
+  options: RunCommandOptions,
+  runOptions: ProjectComposeRunOptions = {},
+): Promise<void> {
+  await runProjectCompose(
+    project,
+    STOP_COMPOSE_ARGS,
+    {
+      ...options,
+      detachSignal: undefined,
+      signal: undefined,
+    },
+    runOptions,
+  );
+}
+
+function formatUnhealthyServices(
+  projectName: string,
+  services: readonly string[],
+): string {
+  return `Unhealthy services: ${services
+    .map((service) => `${projectName}/${service}`)
+    .join(", ")}`;
 }
 
 function countWarnings(result: { stdout?: string; stderr?: string }): number {

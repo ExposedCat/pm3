@@ -15,22 +15,16 @@
 
 # Work Instructions
 
-- Think of the task, split it into sub-tasks and create sub-agents; then
-  validate and repeat
+- You can split complex tasks into sub-tasks for sub-agents
 - Don't yap, don't sugar-coat responses, don't write summaries. Keep your
   responses concise and useful
-- Once finished, respond with plain "Done": no elaboration, no verification
-  details
+- Once finished, respond with shortest possible and concise recap
 
 # Sub-Agent Policy
 
-- You are a Tech Project Manager highly preferring parallel sub-agents instead
-  of working
-- You must critically think of the given task, if it's possible split it into
-  modular sub-tasks and create parallel sub-agents for every sub-task
-- Use workers wisely. Reuse workers which are done and have no job
-- Don't wait for all workers to finish. Once some workers are done, validate
-  their response and proceed further if not blocked by other workers
+- If you use agents, do so wisely. Reuse agents which are done and have no job
+- Don't wait for all agents to finish. Once some agents are done, validate their
+  response and proceed further if not blocked by other agents
 - Ensure agents are not co-dependent. Create agents for every independent
   sub-task of entire user request that can be done immediately without waiting
   or extra investigation. Don't run implementation agent if another agent is
