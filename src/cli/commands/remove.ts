@@ -3,6 +3,7 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
+import { withNamedProject } from "../commands.ts";
 import { inputError, usageError } from "../errors.ts";
 import { requireArgument } from "../utils.ts";
 
@@ -56,30 +57,27 @@ async function runRemoveCommand(
   command: RemoveRunCommand,
   options: RunCommandOptions,
 ): Promise<void> {
-  const { deleteProject, getProjectByName } = await import(
-    "../../database/projects.ts"
-  );
-  const { withCliDatabase } = await import("../runtime/database.ts");
+  const { deleteProject } = await import("../../database/projects.ts");
   const { listProjectContainers, removeProjectArtifacts } = await import(
     "../../runtime/project.ts"
   );
 
-  await withCliDatabase(options, async (db) => {
-    const project = await getProjectByName(db, command.name);
-    if (!project) {
-      throw inputError(`Failed to remove project: "${command.name}" not found`);
-    }
+  await withNamedProject(
+    options,
+    command.name,
+    async (db, project) => {
+      const containers = await listProjectContainers(project, options);
+      if (!command.force && hasRunningContainer(containers)) {
+        throw inputError(
+          `Failed to remove project: "${command.name}" is running`,
+        );
+      }
 
-    const containers = await listProjectContainers(project, options);
-    if (!command.force && hasRunningContainer(containers)) {
-      throw inputError(
-        `Failed to remove project: "${command.name}" is running`,
-      );
-    }
-
-    await removeProjectArtifacts(project, options);
-    await deleteProject(db, project.id);
-  });
+      await removeProjectArtifacts(project, options);
+      await deleteProject(db, project.id);
+    },
+    (name) => `Failed to remove project: "${name}" not found`,
+  );
 }
 
 type ProjectStateContainer = {

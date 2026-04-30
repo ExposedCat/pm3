@@ -15,6 +15,7 @@ import {
   PODMAN_COMPOSE_COMMAND,
 } from "./compose_files.ts";
 import {
+  type ComposeProgress,
   createEmptyComposeProgress,
   getComposeOperation,
   startComposeProgress,
@@ -23,7 +24,7 @@ import {
   parseComposeContainerJson,
   type ProjectComposeContainer,
 } from "./compose_ps.ts";
-import type { ProcessCommand } from "./process.ts";
+import type { ProcessCommand, ProcessResult } from "./process.ts";
 
 export type {
   ProjectComposeContainer,
@@ -44,80 +45,31 @@ export async function runProjectCompose(
   options: RunCommandOptions,
   runOptions: ProjectComposeRunOptions = {},
 ): Promise<void> {
-  const { runSystemProcess } = await import("./process.ts");
-  const runProcess = options.runProcess ?? runSystemProcess;
   const operation = getComposeOperation(args);
-  const loader = startLoader(`${operation} ${project.name}`, {
-    enabled: !options.verbose && !runOptions.detached,
-  });
-  const output = runOptions.detached
-    ? createSilentComposeOutput()
-    : {
-        finishLine: loader.finishLine,
-        startLineAfter: loader.startLineAfter,
-        writeLineAfter: loader.writeLineAfter,
-        startLine: loader.startLine,
-      };
-  let progress = createEmptyComposeProgress();
   const healthAbortController = new AbortController();
-  const abortSignal = combineAbortSignals(
-    options.signal,
-    healthAbortController.signal,
-  );
+  const canAbortUnhealthy =
+    isHealthTrackedOperation(operation) &&
+    (!options.runProcess || options.runLineStream);
+  const result = await runComposeCommand(project, operation, args, options, {
+    detached: runOptions.detached,
+    detachSignal: isHealthTrackedOperation(operation)
+      ? options.detachSignal
+      : undefined,
+    onHealthChange: runOptions.onHealthChange,
+    onUnhealthy: canAbortUnhealthy
+      ? () => healthAbortController.abort()
+      : undefined,
+    signal: canAbortUnhealthy
+      ? combineAbortSignals(options.signal, healthAbortController.signal)
+      : options.signal,
+  });
 
-  const result = await (async () => {
-    try {
-      progress = await startComposeProgress(
-        project,
-        operation,
-        options,
-        output,
-        {
-          onHealthChange: (service, status) =>
-            runOptions.onHealthChange?.({
-              project: project.name,
-              service,
-              status,
-            }),
-          onUnhealthy: () => healthAbortController.abort(),
-        },
-      );
-
-      const command: ProcessCommand = {
-        command: PODMAN_COMPOSE_COMMAND,
-        args: progress.captureComposeCommands ? ["--verbose", ...args] : args,
-        cwd: project.workingDir,
-      };
-      const canAbortUnhealthy =
-        isHealthTrackedOperation(operation) &&
-        (!options.runProcess || options.runLineStream);
-      const canDetach = isHealthTrackedOperation(operation);
-      if (canAbortUnhealthy || options.signal) {
-        command.signal = abortSignal;
-      }
-      if (canDetach && options.detachSignal) {
-        command.detachSignal = options.detachSignal;
-      }
-      if (progress.captureComposeCommands) {
-        command.onOutput = ({ text }) => progress.writeComposeOutput(text);
-      }
-      if (options.verbose) {
-        command.verbose = true;
-      }
-
-      return await runProcess(command);
-    } finally {
-      loader.stop();
-      await progress.stop();
-    }
-  })();
-
-  if (result.detached) {
+  if (result.process.detached) {
     return;
   }
 
-  if (result.code !== 0) {
-    const unhealthyServices = progress.unhealthyServices();
+  if (result.process.code !== 0) {
+    const unhealthyServices = result.progress.unhealthyServices();
     if (unhealthyServices.length > 0) {
       await stopStartedComposeServices(project, options, {
         detached: runOptions.detached,
@@ -133,10 +85,10 @@ export async function runProjectCompose(
       });
     }
 
-    throw inputError(formatComposeFailure(result));
+    throw inputError(formatComposeFailure(result.process));
   }
 
-  const unhealthyServices = progress.unhealthyServices();
+  const unhealthyServices = result.progress.unhealthyServices();
   if (unhealthyServices.length > 0) {
     await stopStartedComposeServices(project, options, {
       detached: runOptions.detached,
@@ -144,8 +96,11 @@ export async function runProjectCompose(
     throw inputError(formatUnhealthyServices(project.name, unhealthyServices));
   }
 
-  const warnings = countWarnings(result);
-  if (!runOptions.detached && warnings > progress.shownNoticeCount()) {
+  const warnings = countWarnings(result.process);
+  if (
+    !runOptions.detached &&
+    warnings > result.progress.shownNoticeCount()
+  ) {
     console.log(`Finished with ${warnings} warnings`);
   }
 }
@@ -300,16 +255,23 @@ async function stopStartedComposeServices(
   options: RunCommandOptions,
   runOptions: ProjectComposeRunOptions = {},
 ): Promise<void> {
-  await runProjectCompose(
+  const result = await runComposeCommand(
     project,
+    getComposeOperation(STOP_COMPOSE_ARGS),
     STOP_COMPOSE_ARGS,
     {
       ...options,
       detachSignal: undefined,
       signal: undefined,
     },
-    runOptions,
+    {
+      detached: runOptions.detached,
+    },
   );
+
+  if (result.process.code !== 0) {
+    throw inputError(formatComposeFailure(result.process));
+  }
 }
 
 function formatUnhealthyServices(
@@ -325,4 +287,78 @@ function countWarnings(result: { stdout?: string; stderr?: string }): number {
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`
     .split("\n")
     .filter((line) => /\bwarn(?:ing)?\b/i.test(line)).length;
+}
+
+type ComposeCommandRunOptions = {
+  detached?: boolean;
+  detachSignal?: AbortSignal;
+  onHealthChange?: (change: ProjectComposeHealthChange) => void;
+  onUnhealthy?: (service: string) => void;
+  signal?: AbortSignal;
+};
+
+type ComposeCommandRunResult = {
+  process: ProcessResult;
+  progress: ComposeProgress;
+};
+
+async function runComposeCommand(
+  project: ComposeProject,
+  operation: string,
+  args: readonly string[],
+  options: RunCommandOptions,
+  runOptions: ComposeCommandRunOptions = {},
+): Promise<ComposeCommandRunResult> {
+  const { runSystemProcess } = await import("./process.ts");
+  const runProcess = options.runProcess ?? runSystemProcess;
+  const loader = startLoader(`${operation} ${project.name}`, {
+    enabled: !options.verbose && !runOptions.detached,
+  });
+  const output = runOptions.detached
+    ? createSilentComposeOutput()
+    : {
+        finishLine: loader.finishLine,
+        startLineAfter: loader.startLineAfter,
+        startLine: loader.startLine,
+        writeLineAfter: loader.writeLineAfter,
+      };
+  let progress = createEmptyComposeProgress();
+
+  try {
+    progress = await startComposeProgress(project, operation, options, output, {
+      onHealthChange: (service, status) =>
+        runOptions.onHealthChange?.({
+          project: project.name,
+          service,
+          status,
+        }),
+      onUnhealthy: runOptions.onUnhealthy,
+    });
+
+    const command: ProcessCommand = {
+      command: PODMAN_COMPOSE_COMMAND,
+      args: progress.captureComposeCommands ? ["--verbose", ...args] : args,
+      cwd: project.workingDir,
+    };
+    if (runOptions.signal) {
+      command.signal = runOptions.signal;
+    }
+    if (runOptions.detachSignal) {
+      command.detachSignal = runOptions.detachSignal;
+    }
+    if (progress.captureComposeCommands) {
+      command.onOutput = ({ text }) => progress.writeComposeOutput(text);
+    }
+    if (options.verbose) {
+      command.verbose = true;
+    }
+
+    return {
+      process: await runProcess(command),
+      progress,
+    };
+  } finally {
+    loader.stop();
+    await progress.stop();
+  }
 }

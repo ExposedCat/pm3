@@ -3,7 +3,8 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { inputError, usageError } from "../errors.ts";
+import { withNamedProject } from "../commands.ts";
+import { usageError } from "../errors.ts";
 import { requireArgument } from "../utils.ts";
 
 type LifecycleCommandKind = "start" | "stop" | "restart";
@@ -126,18 +127,11 @@ async function runLifecycleCommand(
   command: LifecycleRunCommand,
   options: RunCommandOptions,
 ): Promise<void> {
-  const { getProjectByName } = await import("../../database/projects.ts");
-  const { withCliDatabase } = await import("../runtime/database.ts");
   const { restartProject, startProject, stopProject } = await import(
     "../../runtime/project.ts"
   );
 
-  await withCliDatabase(options, async (db) => {
-    const project = await getProjectByName(db, command.name);
-    if (!project) {
-      throw inputError(`Project not found: ${command.name}`);
-    }
-
+  await withNamedProject(options, command.name, async (_db, project) => {
     if (command.kind === "start") {
       await startProject(project, options, {
         build: command.build,

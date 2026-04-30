@@ -3,7 +3,8 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { inputError, usageError } from "../errors.ts";
+import { withNamedProject } from "../commands.ts";
+import { usageError } from "../errors.ts";
 import { requireArgument } from "../utils.ts";
 
 export type DisableCommand = CliCommand<"disable"> & {
@@ -54,18 +55,10 @@ async function runDisableCommand(
   command: Pick<DisableCommand, "name" | "now">,
   options: RunCommandOptions,
 ): Promise<void> {
-  const { disableProject, getProjectByName } = await import(
-    "../../database/projects.ts"
-  );
-  const { withCliDatabase } = await import("../runtime/database.ts");
+  const { disableProject } = await import("../../database/projects.ts");
   const { stopProject } = await import("../../runtime/project.ts");
 
-  await withCliDatabase(options, async (db) => {
-    const project = await getProjectByName(db, command.name);
-    if (!project) {
-      throw inputError(`Project not found: ${command.name}`);
-    }
-
+  await withNamedProject(options, command.name, async (db, project) => {
     await disableProject(db, project.id);
     console.log(`Disabled ${project.name}`);
 

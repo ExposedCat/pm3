@@ -16,6 +16,13 @@ function parseHelpArgs(args: string[]): HelpCommand {
 
   return {
     kind: "help",
-    run: () => Promise.resolve(),
+    run: async () => {
+      const [{ commandDefinitions }, { formatHelpText }] = await Promise.all([
+        import("../commands.ts"),
+        import("../help.ts"),
+      ]);
+
+      console.log(formatHelpText(commandDefinitions).trimEnd());
+    },
   };
 }

@@ -24,24 +24,8 @@ function parseDaemonArgs(args: string[]): DaemonCommand {
       const { runDaemon } = await import("../../runtime/daemon.ts");
 
       await withCliDatabase(options, async (db) => {
-        await runDaemon(db, options, { signal: createDaemonSignal() });
+        await runDaemon(db, options);
       });
     },
   };
-}
-
-function createDaemonSignal(): AbortSignal {
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    Deno.addSignalListener(signal, abort);
-    controller.signal.addEventListener(
-      "abort",
-      () => Deno.removeSignalListener(signal, abort),
-      { once: true },
-    );
-  }
-
-  return controller.signal;
 }

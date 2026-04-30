@@ -1,14 +1,16 @@
 import { DatabaseSync } from "node:sqlite";
 import { PolySqliteDialect } from "@soapbox/kysely-deno-sqlite";
-import { dirname, fromFileUrl } from "@std/path";
+import { dirname, join } from "@std/path";
 import type { CompiledQuery, QueryResult } from "kysely";
 import { Kysely } from "kysely";
 import { migrateDatabase } from "./migrations.ts";
 import type { ProjectTable } from "./projects.ts";
 
-export const DEFAULT_DATABASE_PATH = fromFileUrl(
-  new URL("../../data/pm3.sqlite", import.meta.url),
-);
+const DATABASE_PATH_ENV = "PM3_DATABASE_PATH";
+const XDG_DATA_HOME_ENV = "XDG_DATA_HOME";
+const HOME_ENV = "HOME";
+const DATA_DIR_NAME = "pm3";
+const DATABASE_FILE_NAME = "pm3.sqlite";
 
 export type DatabaseSchema = {
   projects: ProjectTable;
@@ -16,8 +18,16 @@ export type DatabaseSchema = {
 
 export type PM3Database = Kysely<DatabaseSchema>;
 
+export function resolveDatabasePath(path?: string): string {
+  return (
+    path ??
+    getEnv(DATABASE_PATH_ENV) ??
+    join(resolveUserDataDir(), DATA_DIR_NAME, DATABASE_FILE_NAME)
+  );
+}
+
 export async function createDatabase(
-  path = DEFAULT_DATABASE_PATH,
+  path = resolveDatabasePath(),
 ): Promise<PM3Database> {
   Deno.mkdirSync(dirname(path), { recursive: true });
   const database = new DatabaseSync(path);
@@ -44,37 +54,66 @@ type NodeSqliteRunResult = {
   lastInsertRowid: number | bigint;
 };
 
+type NodeSqliteStatement = {
+  readonly reader: boolean;
+  all(parameters: ReadonlyArray<NodeSqliteValue>): unknown[];
+  run(parameters: ReadonlyArray<NodeSqliteValue>): NodeSqliteRunResult;
+  iterate(parameters: ReadonlyArray<NodeSqliteValue>): IterableIterator<unknown>;
+};
+
 function createNodeSqliteAdapter(database: DatabaseSync) {
   return {
     executeQuery<R>({
+      query,
       sql,
       parameters,
     }: CompiledQuery): Promise<QueryResult<R>> {
-      const statement = database.prepare(sql);
+      const statement = createNodeSqliteStatement(database.prepare(sql), query);
       const values = parameters.map(normalizeNodeSqliteValue);
 
-      if (expectsRows(sql)) {
-        return Promise.resolve({ rows: statement.all(...values) as R[] });
+      if (statement.reader) {
+        return Promise.resolve({ rows: statement.all(values) as R[] });
       }
 
-      const result = statement.run(...values) as NodeSqliteRunResult;
+      const result = statement.run(values);
+      const numAffectedRows = BigInt(result.changes);
+
       return Promise.resolve({
         rows: [],
-        numAffectedRows: BigInt(result.changes),
+        numAffectedRows,
+        numUpdatedOrDeletedRows: numAffectedRows,
         insertId: BigInt(result.lastInsertRowid),
       });
     },
-    async *streamQuery<R>({ sql, parameters }: CompiledQuery) {
-      const statement = database.prepare(sql);
+    async *streamQuery<R>({ query, sql, parameters }: CompiledQuery) {
+      const statement = createNodeSqliteStatement(database.prepare(sql), query);
       const values = parameters.map(normalizeNodeSqliteValue);
 
-      for (const row of statement.iterate(...values)) {
+      for (const row of statement.iterate(values)) {
         yield { rows: [row as R] };
       }
     },
     destroy(): Promise<void> {
       database.close();
       return Promise.resolve();
+    },
+  };
+}
+
+function createNodeSqliteStatement(
+  statement: ReturnType<DatabaseSync["prepare"]>,
+  query: CompiledQuery["query"],
+): NodeSqliteStatement {
+  return {
+    reader: resolveQueryReader(statement, query),
+    all(parameters) {
+      return statement.all(...parameters);
+    },
+    run(parameters) {
+      return statement.run(...parameters) as NodeSqliteRunResult;
+    },
+    iterate(parameters) {
+      return statement.iterate(...parameters) as IterableIterator<unknown>;
     },
   };
 }
@@ -87,13 +126,43 @@ function normalizeNodeSqliteValue(value: unknown): NodeSqliteValue {
   return value as NodeSqliteValue;
 }
 
-function expectsRows(sql: string): boolean {
-  const normalized = sql.trimStart().toLowerCase();
+function resolveQueryReader(
+  statement: ReturnType<DatabaseSync["prepare"]>,
+  query: CompiledQuery["query"],
+): boolean {
+  const reader = (statement as { reader?: unknown }).reader;
+  if (typeof reader === "boolean") {
+    return reader;
+  }
+
+  switch (query.kind) {
+    case "SelectQueryNode":
+      return true;
+    case "InsertQueryNode":
+    case "UpdateQueryNode":
+    case "DeleteQueryNode":
+    case "MergeQueryNode":
+      return "returning" in query && query.returning !== undefined;
+    default:
+      return false;
+  }
+}
+
+function resolveUserDataDir(): string {
   return (
-    normalized.startsWith("select") ||
-    normalized.startsWith("pragma") ||
-    normalized.startsWith("explain") ||
-    normalized.startsWith("with") ||
-    /\breturning\b/i.test(sql)
+    getEnv(XDG_DATA_HOME_ENV) ?? join(requireEnv(HOME_ENV), ".local", "share")
   );
+}
+
+function requireEnv(name: string): string {
+  const value = getEnv(name);
+  if (!value) {
+    throw new Error(`${name} is required to resolve the pm3 database path.`);
+  }
+
+  return value;
+}
+
+function getEnv(name: string): string | undefined {
+  return Deno.env.get(name) || undefined;
 }

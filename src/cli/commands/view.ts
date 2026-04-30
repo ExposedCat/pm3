@@ -3,7 +3,7 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { inputError } from "../errors.ts";
+import { withNamedProject } from "../commands.ts";
 import { printProject } from "../output/project.ts";
 import { requireArgument, requireNoExtraArgs } from "../utils.ts";
 
@@ -35,15 +35,7 @@ async function runViewCommand(
   name: string,
   options: RunCommandOptions,
 ): Promise<void> {
-  const { getProjectByName } = await import("../../database/projects.ts");
-  const { withCliDatabase } = await import("../runtime/database.ts");
-
-  await withCliDatabase(options, async (db) => {
-    const project = await getProjectByName(db, name);
-    if (!project) {
-      throw inputError(`Project not found: ${name}`);
-    }
-
+  await withNamedProject(options, name, async (_db, project) => {
     printProject(project);
   });
 }

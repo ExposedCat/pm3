@@ -33,14 +33,19 @@ type ComposeProject = {
   workingDir: string;
 };
 
+export type ComposeServiceDiscovery =
+  | { kind: "missing-compose-file" }
+  | { kind: "services"; services: string[] }
+  | { kind: "error"; message: string };
+
 export async function listComposeServices(
   project: ComposeProject,
   runProcess: (
     command: ProcessCommand,
-  ) => Promise<{ code: number; stdout?: string }>,
-): Promise<string[]> {
+  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
+): Promise<ComposeServiceDiscovery> {
   if (!(await hasComposeFile(project.workingDir))) {
-    return [];
+    return { kind: "missing-compose-file" };
   }
 
   const result = await runProcess({
@@ -51,11 +56,20 @@ export async function listComposeServices(
   });
 
   if (result.code !== 0) {
-    return [];
+    return {
+      kind: "error",
+      message:
+        result.stderr?.trim() ||
+        result.stdout?.trim() ||
+        `${PODMAN_COMPOSE_COMMAND} config --services exited with code ${result.code}`,
+    };
   }
 
-  return (result.stdout ?? "")
-    .split("\n")
-    .map((service) => service.trim())
-    .filter(Boolean);
+  return {
+    kind: "services",
+    services: (result.stdout ?? "")
+      .split("\n")
+      .map((service) => service.trim())
+      .filter(Boolean),
+  };
 }

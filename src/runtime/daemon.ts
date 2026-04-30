@@ -6,7 +6,7 @@ import {
 } from "../cli/runtime/compose.ts";
 import type { ProjectComposeHealthStatus } from "../cli/runtime/compose_events.ts";
 import type { PM3Database } from "../database/database.ts";
-import { listEnabledProjects, listProjects } from "../database/projects.ts";
+import { listProjects } from "../database/projects.ts";
 import { startProject } from "./project.ts";
 
 export type DaemonRunOptions = {
@@ -23,25 +23,38 @@ export async function runDaemon(
   daemonOptions: DaemonRunOptions = {},
 ): Promise<void> {
   console.log("Starting PM3 Daemon...");
-  const signal = daemonOptions.signal ?? new AbortController().signal;
-  const projects = new Map<number, RegisteredProject>();
+  const signal = daemonOptions.signal ?? commandOptions.signal ??
+    new AbortController().signal;
+  const watchedProjects = new Map<number, WatchedProject>();
+  const managedProjects = new Map<number, ManagedProject>();
   const healthStatuses = new Map<string, ProjectComposeHealthStatus>();
   const healthContainerIds = new Map<string, string>();
-  let monitorTimer: number | undefined;
-  let monitorPromise: Promise<void> | undefined;
-  let monitoring = false;
+  let reconcileTimer: number | undefined;
+  let reconcilePromise: Promise<void> | undefined;
+  let reconciling = false;
+  let reconcileFailed = false;
+  let rejectReconcileFailure: ((reason?: unknown) => void) | undefined;
+  const reconcileFailure = new Promise<never>((_, reject) => {
+    rejectReconcileFailure = reject;
+  });
 
   let healthChanges: { stop(): Promise<void> } | undefined;
   try {
-    await reconcileRegisteredProjects(db, projects);
-    const containers = await snapshotProjectContainers(
+    const startupState = await reconcileDaemonProjects(
+      db,
+      watchedProjects,
+      managedProjects,
+      healthStatuses,
+      healthContainerIds,
+    );
+    const startupContainers = await snapshotProjectContainers(
       commandOptions,
-      [...projects.values()],
+      startupState.managedProjects,
       healthStatuses,
       healthContainerIds,
     );
     healthChanges = await watchProjectComposeHealthChanges(
-      () => [...projects.values()],
+      () => [...watchedProjects.values()],
       commandOptions,
       ({ project, service, status }) => {
         const key = formatHealthStatusKey(project, service);
@@ -54,99 +67,145 @@ export async function runDaemon(
         console.log(`${project}/${service} ${status}`);
       },
     );
-    await startEnabledProjects(
-      db,
+    await startDownProjects(
       commandOptions,
-      containers,
+      startupState.managedProjects,
+      startupContainers,
       healthStatuses,
       healthContainerIds,
     );
-    monitorTimer = setInterval(() => {
-      if (monitoring) {
+    reconcileTimer = setInterval(() => {
+      if (reconciling || reconcileFailed) {
         return;
       }
 
-      monitoring = true;
-      monitorPromise = monitorRegisteredProjects(
+      reconciling = true;
+      reconcilePromise = reconcileDaemonState(
         db,
         commandOptions,
-        projects,
+        watchedProjects,
+        managedProjects,
         healthStatuses,
         healthContainerIds,
+        { logKnownChanges: true },
       )
-        .catch(() => {})
+        .catch((error) => {
+          reconcileFailed = true;
+          if (reconcileTimer !== undefined) {
+            clearInterval(reconcileTimer);
+            reconcileTimer = undefined;
+          }
+
+          console.error(
+            `PM3 daemon reconcile failed: ${formatDaemonError(error)}`,
+          );
+          rejectReconcileFailure?.(error);
+        })
         .finally(() => {
-          monitoring = false;
-          monitorPromise = undefined;
+          reconciling = false;
+          reconcilePromise = undefined;
         });
     }, daemonOptions.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS);
-    await (daemonOptions.wait ?? waitForDaemonStop)(signal);
+    await Promise.race([
+      (daemonOptions.wait ?? waitForDaemonStop)(signal),
+      reconcileFailure,
+    ]);
   } finally {
-    if (monitorTimer !== undefined) {
-      clearInterval(monitorTimer);
+    if (reconcileTimer !== undefined) {
+      clearInterval(reconcileTimer);
     }
-    await monitorPromise;
+    await reconcilePromise;
     await healthChanges?.stop();
   }
 }
 
-async function monitorRegisteredProjects(
+async function reconcileDaemonState(
   db: PM3Database,
   options: RunCommandOptions,
-  projects: Map<number, RegisteredProject>,
+  watchedProjects: Map<number, WatchedProject>,
+  managedProjects: Map<number, ManagedProject>,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
   healthContainerIds: Map<string, string>,
+  reconcileOptions: ReconcileOptions = {},
 ): Promise<void> {
-  await reconcileRegisteredProjects(db, projects);
-  await snapshotProjectContainers(
+  const state = await reconcileDaemonProjects(
+    db,
+    watchedProjects,
+    managedProjects,
+    healthStatuses,
+    healthContainerIds,
+  );
+  const containers = await snapshotProjectContainers(
     options,
-    [...projects.values()],
+    state.managedProjects,
     healthStatuses,
     healthContainerIds,
     {
-      logKnownChanges: true,
+      logKnownChanges: reconcileOptions.logKnownChanges ?? false,
     },
+  );
+  await startDownProjects(
+    options,
+    state.managedProjects,
+    containers,
+    healthStatuses,
+    healthContainerIds,
   );
 }
 
-async function reconcileRegisteredProjects(
+async function reconcileDaemonProjects(
   db: PM3Database,
-  projects: Map<number, RegisteredProject>,
-): Promise<void> {
-  const registeredProjects = await listRegisteredProjects(db);
-  const registeredIds = new Set(
-    registeredProjects.map((project) => project.id),
+  watchedProjects: Map<number, WatchedProject>,
+  managedProjects: Map<number, ManagedProject>,
+  healthStatuses: Map<string, ProjectComposeHealthStatus>,
+  healthContainerIds: Map<string, string>,
+): Promise<ReconciledProjects> {
+  const allProjects = await listDaemonProjects(db);
+  const nextManagedProjects = allProjects.filter(isManagedProject);
+  const allProjectIds = new Set(allProjects.map((project) => project.id));
+  const managedProjectIds = new Set(
+    nextManagedProjects.map((project) => project.id),
   );
 
-  for (const id of projects.keys()) {
-    if (!registeredIds.has(id)) {
-      projects.delete(id);
+  for (const [id] of watchedProjects) {
+    if (!allProjectIds.has(id)) {
+      watchedProjects.delete(id);
     }
   }
 
-  for (const project of registeredProjects) {
-    projects.set(project.id, project);
+  for (const [id] of managedProjects) {
+    if (!managedProjectIds.has(id)) {
+      managedProjects.delete(id);
+    }
   }
+
+  for (const project of allProjects) {
+    watchedProjects.set(project.id, project);
+  }
+
+  for (const project of nextManagedProjects) {
+    managedProjects.set(project.id, project);
+  }
+
+  pruneHealthState(managedProjects, healthStatuses, healthContainerIds);
+
+  return {
+    managedProjects: [...managedProjects.values()],
+  };
 }
 
-async function listRegisteredProjects(
-  db: PM3Database,
-): Promise<RegisteredProject[]> {
+async function listDaemonProjects(db: PM3Database): Promise<WatchedProject[]> {
   return (await listProjects(db)).sort(compareProjectStartupOrder);
 }
 
-async function listStartupProjects(db: PM3Database): Promise<StartupProject[]> {
-  return (await listEnabledProjects(db)).sort(compareProjectStartupOrder);
-}
-
-async function startEnabledProjects(
-  db: PM3Database,
+async function startDownProjects(
   options: RunCommandOptions,
+  projects: readonly ManagedProject[],
   containers: ReadonlyMap<number, readonly ProjectComposeContainer[]>,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
   healthContainerIds: Map<string, string>,
 ): Promise<void> {
-  for (const project of await listStartupProjects(db)) {
+  for (const project of projects) {
     if (!isProjectDown(containers.get(project.id) ?? [])) {
       continue;
     }
@@ -169,7 +228,7 @@ async function startEnabledProjects(
 
 async function snapshotProjectContainers(
   options: RunCommandOptions,
-  projects: readonly RegisteredProject[],
+  projects: readonly ManagedProject[],
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
   healthContainerIds: Map<string, string>,
   snapshotOptions: HealthSnapshotOptions = {},
@@ -199,12 +258,24 @@ async function snapshotProjectContainers(
   return containersByProject;
 }
 
-type StartupProject = Awaited<ReturnType<typeof listEnabledProjects>>[number];
-type RegisteredProject = Awaited<ReturnType<typeof listProjects>>[number];
+type WatchedProject = Awaited<ReturnType<typeof listProjects>>[number];
+type ManagedProject = WatchedProject & { enabled: 1 };
 
 type HealthSnapshotOptions = {
   logKnownChanges?: boolean;
 };
+
+type ReconcileOptions = {
+  logKnownChanges?: boolean;
+};
+
+type ReconciledProjects = {
+  managedProjects: ManagedProject[];
+};
+
+function isManagedProject(project: WatchedProject): project is ManagedProject {
+  return project.enabled === 1;
+}
 
 function trackHealthStatus(
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
@@ -234,6 +305,25 @@ function trackHealthStatus(
   }
 }
 
+function pruneHealthState(
+  projects: ReadonlyMap<number, ManagedProject>,
+  healthStatuses: Map<string, ProjectComposeHealthStatus>,
+  healthContainerIds: Map<string, string>,
+): void {
+  const activeProjectPrefixes = [...projects.values()].map((project) =>
+    `${project.name}/`
+  );
+
+  for (const key of [...healthStatuses.keys()]) {
+    if (activeProjectPrefixes.some((prefix) => key.startsWith(prefix))) {
+      continue;
+    }
+
+    healthStatuses.delete(key);
+    healthContainerIds.delete(key);
+  }
+}
+
 function isProjectDown(
   containers: readonly ProjectComposeContainer[],
 ): boolean {
@@ -242,7 +332,7 @@ function isProjectDown(
   }
 
   return containers.every((container) =>
-    ["created", "exited", "stopped"].includes(container.state.toLowerCase()),
+    ["created", "exited", "stopped"].includes(container.state.toLowerCase())
   );
 }
 
@@ -251,10 +341,18 @@ function formatHealthStatusKey(project: string, service: string): string {
 }
 
 function compareProjectStartupOrder(
-  left: RegisteredProject,
-  right: RegisteredProject,
+  left: WatchedProject,
+  right: WatchedProject,
 ): number {
   return left.name.localeCompare(right.name) || left.id - right.id;
+}
+
+function formatDaemonError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+
+  return String(error);
 }
 
 function waitForDaemonStop(signal: AbortSignal): Promise<void> {

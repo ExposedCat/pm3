@@ -1,11 +1,13 @@
 import type { Generated, Insertable, Selectable } from "kysely";
 import type { PM3Database } from "./database.ts";
 
+type ProjectEnabledValue = 0 | 1;
+
 export type ProjectTable = {
   id: Generated<number>;
   name: string;
   workingDir: string;
-  enabled: Generated<0 | 1>;
+  enabled: Generated<ProjectEnabledValue>;
 };
 
 export type Project = Selectable<ProjectTable>;
@@ -13,6 +15,9 @@ export type ProjectListItem = Pick<
   Project,
   "id" | "name" | "workingDir" | "enabled"
 >;
+
+const PROJECT_DISABLED = 0 as const;
+const PROJECT_ENABLED = 1 as const;
 
 export async function listProjects(
   db: PM3Database,
@@ -28,7 +33,7 @@ export async function listEnabledProjects(db: PM3Database): Promise<Project[]> {
   return await db
     .selectFrom("projects")
     .selectAll()
-    .where("enabled", "=", 1)
+    .where("enabled", "=", PROJECT_ENABLED)
     .orderBy("name", "asc")
     .execute();
 }
@@ -88,20 +93,24 @@ export async function enableProject(
   db: PM3Database,
   id: number,
 ): Promise<void> {
-  await db
-    .updateTable("projects")
-    .set({ enabled: 1 })
-    .where("id", "=", id)
-    .execute();
+  await setProjectEnabled(db, id, PROJECT_ENABLED);
 }
 
 export async function disableProject(
   db: PM3Database,
   id: number,
 ): Promise<void> {
+  await setProjectEnabled(db, id, PROJECT_DISABLED);
+}
+
+async function setProjectEnabled(
+  db: PM3Database,
+  id: number,
+  enabled: ProjectEnabledValue,
+): Promise<void> {
   await db
     .updateTable("projects")
-    .set({ enabled: 0 })
+    .set({ enabled })
     .where("id", "=", id)
     .execute();
 }

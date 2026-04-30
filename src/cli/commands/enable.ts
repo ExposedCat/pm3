@@ -3,7 +3,8 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { inputError, usageError } from "../errors.ts";
+import { withNamedProject } from "../commands.ts";
+import { usageError } from "../errors.ts";
 import { requireArgument } from "../utils.ts";
 
 export type EnableCommand = CliCommand<"enable"> & {
@@ -54,18 +55,10 @@ async function runEnableCommand(
   command: Pick<EnableCommand, "name" | "now">,
   options: RunCommandOptions,
 ): Promise<void> {
-  const { enableProject, getProjectByName } = await import(
-    "../../database/projects.ts"
-  );
-  const { withCliDatabase } = await import("../runtime/database.ts");
+  const { enableProject } = await import("../../database/projects.ts");
   const { startProject } = await import("../../runtime/project.ts");
 
-  await withCliDatabase(options, async (db) => {
-    const project = await getProjectByName(db, command.name);
-    if (!project) {
-      throw inputError(`Project not found: ${command.name}`);
-    }
-
+  await withNamedProject(options, command.name, async (db, project) => {
     await enableProject(db, project.id);
     console.log(`Enabled ${project.name}`);
 

@@ -11,9 +11,10 @@ import {
 import { listCommand } from "./commands/list.ts";
 import { removeCommand } from "./commands/remove.ts";
 import { viewCommand } from "./commands/view.ts";
-import { usageError } from "./errors.ts";
-import { formatHelpText } from "./help.ts";
+import { inputError, usageError } from "./errors.ts";
 import type { RunLineStream, RunProcess } from "./runtime/process.ts";
+import type { PM3Database } from "../database/database.ts";
+import type { Project } from "../database/projects.ts";
 
 export const commandDefinitions = [
   createCommand,
@@ -67,7 +68,7 @@ export function parseArgs(args: string[]): ParsedCommand {
   }
 
   const definition = commandDefinitions.find((command) =>
-    command.names.includes(commandName),
+    command.names.includes(commandName)
   );
   if (!definition) {
     throw usageError(`Unknown command: ${commandName}`);
@@ -81,12 +82,33 @@ export async function runCommand(
   options: RunCommandOptions = {},
 ): Promise<void> {
   const { command, verbose } = parsedCommand;
-  if (command.kind === "help") {
-    console.log(formatHelpText(commandDefinitions).trimEnd());
-    return;
-  }
-
   await command.run({ ...options, verbose: options.verbose ?? verbose });
+}
+
+type MissingProjectMessage = string | ((name: string) => string);
+
+export async function withNamedProject<T>(
+  options: RunCommandOptions,
+  name: string,
+  callback: (db: PM3Database, project: Project) => Promise<T>,
+  missingMessage: MissingProjectMessage = (projectName) =>
+    `Project not found: ${projectName}`,
+): Promise<T> {
+  const { getProjectByName } = await import("../database/projects.ts");
+  const { withCliDatabase } = await import("./runtime/database.ts");
+
+  return await withCliDatabase(options, async (db) => {
+    const project = await getProjectByName(db, name);
+    if (!project) {
+      throw inputError(
+        typeof missingMessage === "function"
+          ? missingMessage(name)
+          : missingMessage,
+      );
+    }
+
+    return await callback(db, project);
+  });
 }
 
 type GlobalOptionsResult = {

@@ -52,6 +52,21 @@ type ProjectListRow = {
   ports: string;
 };
 
+type ProjectListProject = {
+  enabled: 0 | 1;
+  name: string;
+  workingDir: string;
+};
+
+type ProjectListContainer = {
+  createdAt: number;
+  exitedAt: number;
+  ports: string;
+  startedAt: number;
+  state: string;
+  status: string;
+};
+
 async function runListCommand(
   options: RunCommandOptions,
   listOptions: ListOptions,
@@ -62,30 +77,41 @@ async function runListCommand(
 
   await withCliDatabase(options, async (db) => {
     const projects = await listProjects(db);
-    const rows: ProjectListRow[] = [];
-
-    for (const project of projects) {
-      const containers = await listProjectContainers(project, options);
-      rows.push({
-        name: project.name,
-        startup: project.enabled === 1 ? "enabled" : "disabled",
-        ...formatProjectState(containers, listOptions),
-      });
-    }
+    const rows = await Promise.all(
+      projects.map((project) =>
+        buildProjectListRow(
+          project,
+          listOptions,
+          options,
+          listProjectContainers,
+        )
+      ),
+    );
 
     printRows(rows, listOptions);
   });
 }
 
+async function buildProjectListRow(
+  project: ProjectListProject,
+  listOptions: ListOptions,
+  options: RunCommandOptions,
+  listProjectContainers: (
+    project: ProjectListProject,
+    options: RunCommandOptions,
+  ) => Promise<ProjectListContainer[]>,
+): Promise<ProjectListRow> {
+  const containers = await listProjectContainers(project, options);
+
+  return {
+    name: project.name,
+    startup: project.enabled === 1 ? "enabled" : "disabled",
+    ...formatProjectState(containers, listOptions),
+  };
+}
+
 function formatProjectState(
-  containers: readonly {
-    state: string;
-    status: string;
-    createdAt: number;
-    startedAt: number;
-    exitedAt: number;
-    ports: string;
-  }[],
+  containers: readonly ProjectListContainer[],
   options: ListOptions,
 ): Omit<ProjectListRow, "name" | "startup"> {
   const state = getProjectState(containers);
@@ -101,7 +127,7 @@ function formatProjectState(
 }
 
 function getProjectState(
-  containers: readonly { state: string }[],
+  containers: readonly Pick<ProjectListContainer, "state">[],
 ): "down" | "pending" | "up" {
   if (containers.length === 0) {
     return "down";
@@ -125,11 +151,10 @@ function getProjectState(
 }
 
 function getProjectStateDuration(
-  containers: readonly {
-    status: string;
-    startedAt: number;
-    exitedAt: number;
-  }[],
+  containers: readonly Pick<
+    ProjectListContainer,
+    "exitedAt" | "startedAt" | "status"
+  >[],
   state: "down" | "pending" | "up",
 ): string {
   if (state === "pending") {
@@ -138,7 +163,7 @@ function getProjectStateDuration(
 
   const timestamps = containers
     .map((container) =>
-      state === "up" ? container.startedAt : container.exitedAt,
+      state === "up" ? container.startedAt : container.exitedAt
     )
     .filter(Boolean);
 
@@ -164,7 +189,7 @@ function parseStatusDuration(status: string, state: string): string {
 }
 
 function getProjectCreatedTime(
-  containers: readonly { createdAt: number; status: string }[],
+  containers: readonly Pick<ProjectListContainer, "createdAt" | "status">[],
 ): string {
   const timestamps = containers
     .map((container) => container.createdAt)
@@ -223,8 +248,7 @@ function compactDuration(duration: string): string {
   }
 
   const [, days, hours, minutes] = match;
-  const totalSeconds =
-    Number(days ?? 0) * 24 * 60 * 60 +
+  const totalSeconds = Number(days ?? 0) * 24 * 60 * 60 +
     Number(hours ?? 0) * 60 * 60 +
     Number(minutes ?? 0) * 60;
 

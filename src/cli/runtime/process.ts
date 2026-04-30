@@ -147,18 +147,24 @@ function readChunk(
     return Promise.resolve(undefined);
   }
 
-  return Promise.race([
-    reader.read(),
-    new Promise<undefined>((resolve) => {
-      stopSignal.addEventListener(
-        "abort",
-        () => {
-          void reader.cancel().finally(() => resolve(undefined));
-        },
-        { once: true },
-      );
-    }),
-  ]);
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      stopSignal.removeEventListener("abort", abort);
+      void reader.cancel().finally(() => resolve(undefined));
+    };
+
+    stopSignal.addEventListener("abort", abort, { once: true });
+    reader.read().then(
+      (result) => {
+        stopSignal.removeEventListener("abort", abort);
+        resolve(result);
+      },
+      (error) => {
+        stopSignal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {

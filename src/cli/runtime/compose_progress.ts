@@ -1,4 +1,5 @@
 import type { RunCommandOptions } from "../commands.ts";
+import { inputError } from "../errors.ts";
 import { green, red, yellow } from "../output/color.ts";
 import {
   getComposeEventService,
@@ -71,13 +72,29 @@ export async function startComposeProgress(
 
   const { runSystemProcess } = await import("./process.ts");
   const runProcess = options.runProcess ?? runSystemProcess;
-  const services = await listComposeServices(project, runProcess);
+  const serviceDiscovery = await listComposeServices(project, runProcess);
+  if (serviceDiscovery.kind === "missing-compose-file") {
+    return createEmptyComposeProgress();
+  }
+
+  if (serviceDiscovery.kind === "error") {
+    if (shouldTrackComposeHealth(operation)) {
+      throw inputError(
+        `Failed to initialize compose health tracking for ${project.name}: ${serviceDiscovery.message}`,
+      );
+    }
+
+    return createEmptyComposeProgress();
+  }
+
+  const services = serviceDiscovery.services;
   if (services.length === 0) {
     return createEmptyComposeProgress();
   }
 
   const finished = new Set<string>();
   const healthStarted = new Set<string>();
+  const healthLines = new Map<string, string>();
   const unhealthy = new Set<string>();
   const started = new Set<string>();
   const serviceNames = new Set(services);
@@ -145,6 +162,7 @@ export async function startComposeProgress(
         project.name,
         getFinishedComposeOperation(operation),
         healthStarted,
+        healthLines,
         unhealthy,
         service,
         healthStatus,
@@ -332,18 +350,20 @@ function updateComposeHealthProgress(
   projectName: string,
   parentOperation: string,
   started: Set<string>,
+  lines: Map<string, string>,
   unhealthy: Set<string>,
   service: string,
   status: "pending" | "healthy" | "degraded",
   output: ComposeOutput,
 ): void {
-  const line = formatComposeHealthPendingLine();
+  const line = lines.get(service) ?? formatComposeHealthPendingLine();
   if (!started.has(service)) {
     started.add(service);
     output.startLineAfter(
       formatComposeProgressLine(projectName, parentOperation, service),
       line,
     );
+    lines.set(service, line);
   }
 
   if (status === "pending") {
@@ -352,10 +372,14 @@ function updateComposeHealthProgress(
 
   const finishedLine = formatComposeHealthFinishedLine(status);
   output.finishLine(line, finishedLine);
+  lines.set(service, finishedLine);
 
   if (status === "degraded") {
     unhealthy.add(service);
+    return;
   }
+
+  unhealthy.delete(service);
 }
 
 function formatComposeProgressLine(
