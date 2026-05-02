@@ -18,6 +18,7 @@ export type ProjectStartOptions = {
   detached?: boolean;
   noCache?: boolean;
   onHealthChange?: (change: ProjectComposeHealthChange) => void;
+  trackHealth?: boolean;
 };
 
 export async function startProject(
@@ -37,6 +38,7 @@ export async function startProject(
       {
         detached: startOptions.detached,
         onHealthChange: startOptions.onHealthChange,
+        trackHealth: startOptions.trackHealth,
       },
     );
     return;
@@ -45,6 +47,7 @@ export async function startProject(
   await runProjectCompose(project, ["up", "-d"], options, {
     detached: startOptions.detached,
     onHealthChange: startOptions.onHealthChange,
+    trackHealth: startOptions.trackHealth,
   });
 }
 

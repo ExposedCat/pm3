@@ -5,9 +5,9 @@ import {
   getComposeEventService,
   getComposeEventWorkingDir,
   getComposeHealthStatus,
-  parsePodmanEvent,
   type ProjectComposeHealthChange,
   type ProjectComposeHealthStatus,
+  parsePodmanEvent,
 } from "./compose_events.ts";
 import {
   hasComposeFile,
@@ -21,8 +21,8 @@ import {
   startComposeProgress,
 } from "./compose_progress.ts";
 import {
-  parseComposeContainerJson,
   type ProjectComposeContainer,
+  parseComposeContainerJson,
 } from "./compose_ps.ts";
 import type { ProcessCommand, ProcessResult } from "./process.ts";
 
@@ -30,6 +30,10 @@ export type {
   ProjectComposeContainer,
   ProjectComposeHealthChange,
   ProjectComposeHealthStatus,
+};
+
+type ProjectComposeHealthEvent = ProjectComposeHealthChange & {
+  containerId: string;
 };
 
 export const STOP_COMPOSE_ARGS = ["down", "--remove-orphans"] as const;
@@ -46,8 +50,10 @@ export async function runProjectCompose(
   runOptions: ProjectComposeRunOptions = {},
 ): Promise<void> {
   const operation = getComposeOperation(args);
+  const trackHealth = runOptions.trackHealth ?? true;
   const healthAbortController = new AbortController();
   const canAbortUnhealthy =
+    trackHealth &&
     isHealthTrackedOperation(operation) &&
     (!options.runProcess || options.runLineStream);
   const result = await runComposeCommand(project, operation, args, options, {
@@ -62,6 +68,7 @@ export async function runProjectCompose(
     signal: canAbortUnhealthy
       ? combineAbortSignals(options.signal, healthAbortController.signal)
       : options.signal,
+    trackHealth,
   });
 
   if (result.process.detached) {
@@ -97,10 +104,7 @@ export async function runProjectCompose(
   }
 
   const warnings = countWarnings(result.process);
-  if (
-    !runOptions.detached &&
-    warnings > result.progress.shownNoticeCount()
-  ) {
+  if (!runOptions.detached && warnings > result.progress.shownNoticeCount()) {
     console.log(`Finished with ${warnings} warnings`);
   }
 }
@@ -125,6 +129,7 @@ export async function removeProjectComposeArtifacts(
 export type ProjectComposeRunOptions = {
   detached?: boolean;
   onHealthChange?: (change: ProjectComposeHealthChange) => void;
+  trackHealth?: boolean;
 };
 
 export async function listProjectComposeContainers(
@@ -156,7 +161,7 @@ export async function listProjectComposeContainers(
 export async function watchProjectComposeHealthChanges(
   getProjects: () => readonly ComposeProject[],
   options: RunCommandOptions,
-  onChange: (change: ProjectComposeHealthChange) => void,
+  onChange: (change: ProjectComposeHealthEvent) => void,
 ): Promise<{ stop(): Promise<void> }> {
   if (options.runProcess && !options.runLineStream) {
     return { stop: () => Promise.resolve() };
@@ -194,7 +199,12 @@ export async function watchProjectComposeHealthChanges(
         return;
       }
 
-      onChange({ project: project.name, service, status });
+      onChange({
+        project: project.name,
+        service,
+        status,
+        containerId: event?.ID ?? "",
+      });
     },
   );
 }
@@ -295,6 +305,7 @@ type ComposeCommandRunOptions = {
   onHealthChange?: (change: ProjectComposeHealthChange) => void;
   onUnhealthy?: (service: string) => void;
   signal?: AbortSignal;
+  trackHealth?: boolean;
 };
 
 type ComposeCommandRunResult = {
@@ -325,15 +336,23 @@ async function runComposeCommand(
   let progress = createEmptyComposeProgress();
 
   try {
-    progress = await startComposeProgress(project, operation, options, output, {
-      onHealthChange: (service, status) =>
-        runOptions.onHealthChange?.({
-          project: project.name,
-          service,
-          status,
-        }),
-      onUnhealthy: runOptions.onUnhealthy,
-    });
+    if (runOptions.trackHealth ?? true) {
+      progress = await startComposeProgress(
+        project,
+        operation,
+        options,
+        output,
+        {
+          onHealthChange: (service, status) =>
+            runOptions.onHealthChange?.({
+              project: project.name,
+              service,
+              status,
+            }),
+          onUnhealthy: runOptions.onUnhealthy,
+        },
+      );
+    }
 
     const command: ProcessCommand = {
       command: PODMAN_COMPOSE_COMMAND,

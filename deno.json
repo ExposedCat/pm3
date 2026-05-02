@@ -1,8 +1,8 @@
 {
   "version": "1.1.2",
   "tasks": {
-    "build": "deno compile --allow-read --allow-write --allow-env --allow-run=podman-compose,podman --output dist/pm3 src/cli/main.ts",
-    "cli": "deno run --allow-read --allow-write --allow-env --allow-run=podman-compose,podman src/cli/main.ts",
+    "build": "deno compile --allow-read --allow-write --allow-env --allow-net --allow-run=podman-compose,podman --output dist/pm3 src/cli/main.ts",
+    "cli": "deno run --allow-read --allow-write --allow-env --allow-net --allow-run=podman-compose,podman src/cli/main.ts",
     "check": "deno run --allow-read --allow-run scripts/check.ts",
     "format": "biome lint --write; biome format --write",
     "test": "deno test --allow-read --allow-write --allow-env --allow-run=deno",

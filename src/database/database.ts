@@ -4,6 +4,7 @@ import { dirname, join } from "@std/path";
 import type { CompiledQuery, QueryResult } from "kysely";
 import { Kysely } from "kysely";
 import { migrateDatabase } from "./migrations.ts";
+import type { ProjectServiceHealthTable } from "./project_health.ts";
 import type { ProjectTable } from "./projects.ts";
 
 const DATABASE_PATH_ENV = "PM3_DATABASE_PATH";
@@ -13,6 +14,7 @@ const DATA_DIR_NAME = "pm3";
 const DATABASE_FILE_NAME = "pm3.sqlite";
 
 export type DatabaseSchema = {
+  projectServiceHealth: ProjectServiceHealthTable;
   projects: ProjectTable;
 };
 
@@ -58,7 +60,9 @@ type NodeSqliteStatement = {
   readonly reader: boolean;
   all(parameters: ReadonlyArray<NodeSqliteValue>): unknown[];
   run(parameters: ReadonlyArray<NodeSqliteValue>): NodeSqliteRunResult;
-  iterate(parameters: ReadonlyArray<NodeSqliteValue>): IterableIterator<unknown>;
+  iterate(
+    parameters: ReadonlyArray<NodeSqliteValue>,
+  ): IterableIterator<unknown>;
 };
 
 function createNodeSqliteAdapter(database: DatabaseSync) {

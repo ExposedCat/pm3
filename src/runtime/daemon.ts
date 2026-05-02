@@ -6,16 +6,18 @@ import {
 } from "../cli/runtime/compose.ts";
 import type { ProjectComposeHealthStatus } from "../cli/runtime/compose_events.ts";
 import type { PM3Database } from "../database/database.ts";
+import {
+  listProjectServiceHealth,
+  setProjectServiceHealth,
+} from "../database/project_health.ts";
 import { listProjects } from "../database/projects.ts";
+import { type DaemonMessage, startDaemonIpcServer } from "./daemon_ipc.ts";
 import { startProject } from "./project.ts";
 
 export type DaemonRunOptions = {
-  reconcileIntervalMs?: number;
   signal?: AbortSignal;
   wait?: (signal: AbortSignal) => Promise<void>;
 };
-
-const DEFAULT_RECONCILE_INTERVAL_MS = 2_000;
 
 export async function runDaemon(
   db: PM3Database,
@@ -23,187 +25,77 @@ export async function runDaemon(
   daemonOptions: DaemonRunOptions = {},
 ): Promise<void> {
   console.log("Starting PM3 Daemon...");
-  const signal = daemonOptions.signal ?? commandOptions.signal ??
+  const signal =
+    daemonOptions.signal ??
+    commandOptions.signal ??
     new AbortController().signal;
-  const watchedProjects = new Map<number, WatchedProject>();
-  const managedProjects = new Map<number, ManagedProject>();
   const healthStatuses = new Map<string, ProjectComposeHealthStatus>();
-  const healthContainerIds = new Map<string, string>();
-  let reconcileTimer: number | undefined;
-  let reconcilePromise: Promise<void> | undefined;
-  let reconciling = false;
-  let reconcileFailed = false;
-  let rejectReconcileFailure: ((reason?: unknown) => void) | undefined;
-  const reconcileFailure = new Promise<never>((_, reject) => {
-    rejectReconcileFailure = reject;
-  });
+  const lifecycleOperations = new Map<string, DaemonLifecycleOperation>();
 
+  let ipcServer: { stop(): Promise<void> } | undefined;
   let healthChanges: { stop(): Promise<void> } | undefined;
   try {
-    const startupState = await reconcileDaemonProjects(
-      db,
-      watchedProjects,
-      managedProjects,
+    const startupProjects = await listDaemonProjects(db);
+    seedPersistedHealthStatuses(
       healthStatuses,
-      healthContainerIds,
+      startupProjects,
+      await listProjectServiceHealth(db),
     );
+    const enabledProjects = startupProjects.filter(isEnabledProject);
     const startupContainers = await snapshotProjectContainers(
+      db,
       commandOptions,
-      startupState.managedProjects,
+      enabledProjects,
       healthStatuses,
-      healthContainerIds,
+      { logKnownChanges: true },
     );
+    await startDownProjects(commandOptions, enabledProjects, startupContainers);
+    ipcServer = await startDaemonIpcServer((message) => {
+      void handleDaemonMessage(
+        db,
+        lifecycleOperations,
+        healthStatuses,
+        message,
+      );
+    });
     healthChanges = await watchProjectComposeHealthChanges(
-      () => [...watchedProjects.values()],
+      () => startupProjects,
       commandOptions,
       ({ project, service, status }) => {
-        const key = formatHealthStatusKey(project, service);
-        if (healthStatuses.get(key) === status) {
+        if (lifecycleOperations.has(project)) {
           return;
         }
 
-        healthContainerIds.delete(key);
-        healthStatuses.set(key, status);
-        console.log(`${project}/${service} ${status}`);
+        const daemonProject = findDaemonProject(startupProjects, project);
+        if (!daemonProject) {
+          return;
+        }
+
+        void trackHealthStatus(
+          db,
+          healthStatuses,
+          daemonProject,
+          service,
+          status,
+          { logKnownChanges: true },
+        );
       },
     );
-    await startDownProjects(
-      commandOptions,
-      startupState.managedProjects,
-      startupContainers,
-      healthStatuses,
-      healthContainerIds,
-    );
-    reconcileTimer = setInterval(() => {
-      if (reconciling || reconcileFailed) {
-        return;
-      }
-
-      reconciling = true;
-      reconcilePromise = reconcileDaemonState(
-        db,
-        commandOptions,
-        watchedProjects,
-        managedProjects,
-        healthStatuses,
-        healthContainerIds,
-        { logKnownChanges: true },
-      )
-        .catch((error) => {
-          reconcileFailed = true;
-          if (reconcileTimer !== undefined) {
-            clearInterval(reconcileTimer);
-            reconcileTimer = undefined;
-          }
-
-          console.error(
-            `PM3 daemon reconcile failed: ${formatDaemonError(error)}`,
-          );
-          rejectReconcileFailure?.(error);
-        })
-        .finally(() => {
-          reconciling = false;
-          reconcilePromise = undefined;
-        });
-    }, daemonOptions.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS);
-    await Promise.race([
-      (daemonOptions.wait ?? waitForDaemonStop)(signal),
-      reconcileFailure,
-    ]);
+    await (daemonOptions.wait ?? waitForDaemonStop)(signal);
   } finally {
-    if (reconcileTimer !== undefined) {
-      clearInterval(reconcileTimer);
-    }
-    await reconcilePromise;
     await healthChanges?.stop();
+    await ipcServer?.stop();
   }
 }
 
-async function reconcileDaemonState(
-  db: PM3Database,
-  options: RunCommandOptions,
-  watchedProjects: Map<number, WatchedProject>,
-  managedProjects: Map<number, ManagedProject>,
-  healthStatuses: Map<string, ProjectComposeHealthStatus>,
-  healthContainerIds: Map<string, string>,
-  reconcileOptions: ReconcileOptions = {},
-): Promise<void> {
-  const state = await reconcileDaemonProjects(
-    db,
-    watchedProjects,
-    managedProjects,
-    healthStatuses,
-    healthContainerIds,
-  );
-  const containers = await snapshotProjectContainers(
-    options,
-    state.managedProjects,
-    healthStatuses,
-    healthContainerIds,
-    {
-      logKnownChanges: reconcileOptions.logKnownChanges ?? false,
-    },
-  );
-  await startDownProjects(
-    options,
-    state.managedProjects,
-    containers,
-    healthStatuses,
-    healthContainerIds,
-  );
-}
-
-async function reconcileDaemonProjects(
-  db: PM3Database,
-  watchedProjects: Map<number, WatchedProject>,
-  managedProjects: Map<number, ManagedProject>,
-  healthStatuses: Map<string, ProjectComposeHealthStatus>,
-  healthContainerIds: Map<string, string>,
-): Promise<ReconciledProjects> {
-  const allProjects = await listDaemonProjects(db);
-  const nextManagedProjects = allProjects.filter(isManagedProject);
-  const allProjectIds = new Set(allProjects.map((project) => project.id));
-  const managedProjectIds = new Set(
-    nextManagedProjects.map((project) => project.id),
-  );
-
-  for (const [id] of watchedProjects) {
-    if (!allProjectIds.has(id)) {
-      watchedProjects.delete(id);
-    }
-  }
-
-  for (const [id] of managedProjects) {
-    if (!managedProjectIds.has(id)) {
-      managedProjects.delete(id);
-    }
-  }
-
-  for (const project of allProjects) {
-    watchedProjects.set(project.id, project);
-  }
-
-  for (const project of nextManagedProjects) {
-    managedProjects.set(project.id, project);
-  }
-
-  pruneHealthState(managedProjects, healthStatuses, healthContainerIds);
-
-  return {
-    managedProjects: [...managedProjects.values()],
-  };
-}
-
-async function listDaemonProjects(db: PM3Database): Promise<WatchedProject[]> {
+async function listDaemonProjects(db: PM3Database): Promise<DaemonProject[]> {
   return (await listProjects(db)).sort(compareProjectStartupOrder);
 }
 
 async function startDownProjects(
   options: RunCommandOptions,
-  projects: readonly ManagedProject[],
+  projects: readonly EnabledProject[],
   containers: ReadonlyMap<number, readonly ProjectComposeContainer[]>,
-  healthStatuses: Map<string, ProjectComposeHealthStatus>,
-  healthContainerIds: Map<string, string>,
 ): Promise<void> {
   for (const project of projects) {
     if (!isProjectDown(containers.get(project.id) ?? [])) {
@@ -212,25 +104,16 @@ async function startDownProjects(
 
     await startProject(project, options, {
       detached: true,
-      onHealthChange: (change) =>
-        trackHealthStatus(
-          healthStatuses,
-          healthContainerIds,
-          change.project,
-          change.service,
-          change.status,
-          "",
-          { logKnownChanges: true },
-        ),
+      trackHealth: false,
     });
   }
 }
 
 async function snapshotProjectContainers(
+  db: PM3Database,
   options: RunCommandOptions,
-  projects: readonly ManagedProject[],
+  projects: readonly EnabledProject[],
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
-  healthContainerIds: Map<string, string>,
   snapshotOptions: HealthSnapshotOptions = {},
 ): Promise<Map<number, ProjectComposeContainer[]>> {
   const containersByProject = new Map<number, ProjectComposeContainer[]>();
@@ -243,13 +126,12 @@ async function snapshotProjectContainers(
         continue;
       }
 
-      trackHealthStatus(
+      await trackHealthStatus(
+        db,
         healthStatuses,
-        healthContainerIds,
-        project.name,
+        project,
         container.service,
         container.healthStatus,
-        container.id,
         snapshotOptions,
       );
     }
@@ -258,69 +140,75 @@ async function snapshotProjectContainers(
   return containersByProject;
 }
 
-type WatchedProject = Awaited<ReturnType<typeof listProjects>>[number];
-type ManagedProject = WatchedProject & { enabled: 1 };
+type DaemonProject = Awaited<ReturnType<typeof listProjects>>[number];
+type EnabledProject = DaemonProject & { enabled: 1 };
 
 type HealthSnapshotOptions = {
   logKnownChanges?: boolean;
 };
 
-type ReconcileOptions = {
-  logKnownChanges?: boolean;
-};
+type DaemonLifecycleOperation = "restart" | "start" | "stop";
 
-type ReconciledProjects = {
-  managedProjects: ManagedProject[];
-};
+type PersistedProjectHealth = Awaited<
+  ReturnType<typeof listProjectServiceHealth>
+>[number];
 
-function isManagedProject(project: WatchedProject): project is ManagedProject {
+function isEnabledProject(project: DaemonProject): project is EnabledProject {
   return project.enabled === 1;
 }
 
-function trackHealthStatus(
+async function handleDaemonMessage(
+  db: PM3Database,
+  lifecycleOperations: Map<string, DaemonLifecycleOperation>,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
-  healthContainerIds: Map<string, string>,
-  project: string,
-  service: string,
-  status: ProjectComposeHealthStatus,
-  containerId: string,
-  options: HealthSnapshotOptions,
-): void {
-  const key = formatHealthStatusKey(project, service);
-  const previousStatus = healthStatuses.get(key);
-  const previousContainerId = healthContainerIds.get(key);
-  if (containerId) {
-    healthContainerIds.set(key, containerId);
+  message: DaemonMessage,
+): Promise<void> {
+  if (message.type === "lifecycle.begin") {
+    lifecycleOperations.set(message.project, message.operation);
+    return;
   }
-  healthStatuses.set(key, status);
 
-  const changedContainer = Boolean(
-    previousContainerId && containerId && previousContainerId !== containerId,
-  );
-  if (
-    options.logKnownChanges &&
-    (changedContainer || previousStatus !== status)
-  ) {
-    console.log(`${project}/${service} ${status}`);
+  if (message.type === "lifecycle.abort") {
+    lifecycleOperations.delete(message.project);
+    return;
+  }
+
+  if (message.operation === "stop") {
+    lifecycleOperations.set(message.project, message.operation);
+    return;
+  }
+
+  lifecycleOperations.delete(message.project);
+  for (const health of message.health) {
+    await trackHealthStatus(
+      db,
+      healthStatuses,
+      { id: message.projectId, name: message.project },
+      health.service,
+      health.status,
+      { logKnownChanges: true },
+    );
   }
 }
 
-function pruneHealthState(
-  projects: ReadonlyMap<number, ManagedProject>,
+async function trackHealthStatus(
+  db: PM3Database,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
-  healthContainerIds: Map<string, string>,
-): void {
-  const activeProjectPrefixes = [...projects.values()].map((project) =>
-    `${project.name}/`
-  );
-
-  for (const key of [...healthStatuses.keys()]) {
-    if (activeProjectPrefixes.some((prefix) => key.startsWith(prefix))) {
-      continue;
-    }
-
-    healthStatuses.delete(key);
-    healthContainerIds.delete(key);
+  project: Pick<DaemonProject, "id" | "name">,
+  service: string,
+  status: ProjectComposeHealthStatus,
+  options: HealthSnapshotOptions,
+): Promise<void> {
+  const key = formatHealthStatusKey(project.name, service);
+  const previousStatus = healthStatuses.get(key);
+  healthStatuses.set(key, status);
+  await setProjectServiceHealth(db, {
+    projectId: project.id,
+    service,
+    status,
+  });
+  if (options.logKnownChanges && previousStatus !== status) {
+    console.log(`${project.name}/${service} ${status}`);
   }
 }
 
@@ -332,7 +220,7 @@ function isProjectDown(
   }
 
   return containers.every((container) =>
-    ["created", "exited", "stopped"].includes(container.state.toLowerCase())
+    ["created", "exited", "stopped"].includes(container.state.toLowerCase()),
   );
 }
 
@@ -340,19 +228,39 @@ function formatHealthStatusKey(project: string, service: string): string {
   return `${project}/${service}`;
 }
 
-function compareProjectStartupOrder(
-  left: WatchedProject,
-  right: WatchedProject,
-): number {
-  return left.name.localeCompare(right.name) || left.id - right.id;
+function seedPersistedHealthStatuses(
+  healthStatuses: Map<string, ProjectComposeHealthStatus>,
+  projects: readonly DaemonProject[],
+  persistedHealth: readonly PersistedProjectHealth[],
+): void {
+  const projectsById = new Map(
+    projects.map((project) => [project.id, project]),
+  );
+  for (const health of persistedHealth) {
+    const project = projectsById.get(health.projectId);
+    if (!project) {
+      continue;
+    }
+
+    healthStatuses.set(
+      formatHealthStatusKey(project.name, health.service),
+      health.status,
+    );
+  }
 }
 
-function formatDaemonError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.stack ?? error.message;
-  }
+function findDaemonProject(
+  projects: readonly DaemonProject[],
+  name: string,
+): DaemonProject | undefined {
+  return projects.find((project) => project.name === name);
+}
 
-  return String(error);
+function compareProjectStartupOrder(
+  left: DaemonProject,
+  right: DaemonProject,
+): number {
+  return left.name.localeCompare(right.name) || left.id - right.id;
 }
 
 function waitForDaemonStop(signal: AbortSignal): Promise<void> {

@@ -95,6 +95,7 @@ export async function startComposeProgress(
   const finished = new Set<string>();
   const healthStarted = new Set<string>();
   const healthLines = new Map<string, string>();
+  const healthStatuses = new Map<string, "pending" | "healthy" | "degraded">();
   const unhealthy = new Set<string>();
   const started = new Set<string>();
   const serviceNames = new Set(services);
@@ -150,24 +151,25 @@ export async function startComposeProgress(
         return;
       }
 
-      finishComposeProgress(
-        project.name,
-        operation,
-        finished,
-        started,
-        service,
-        output,
-      );
-      updateComposeHealthProgress(
+      if (!finished.has(service)) {
+        return;
+      }
+
+      const changed = updateComposeHealthProgress(
         project.name,
         getFinishedComposeOperation(operation),
         healthStarted,
         healthLines,
+        healthStatuses,
         unhealthy,
         service,
         healthStatus,
         output,
       );
+      if (!changed) {
+        return;
+      }
+
       progressOptions.onHealthChange?.(service, healthStatus);
       if (healthStatus === "degraded") {
         progressOptions.onUnhealthy?.(service);
@@ -351,11 +353,22 @@ function updateComposeHealthProgress(
   parentOperation: string,
   started: Set<string>,
   lines: Map<string, string>,
+  statuses: Map<string, "pending" | "healthy" | "degraded">,
   unhealthy: Set<string>,
   service: string,
   status: "pending" | "healthy" | "degraded",
   output: ComposeOutput,
-): void {
+): boolean {
+  const previousStatus = statuses.get(service);
+  if (previousStatus && previousStatus !== "pending") {
+    return false;
+  }
+
+  if (previousStatus === status) {
+    return false;
+  }
+
+  statuses.set(service, status);
   const line = lines.get(service) ?? formatComposeHealthPendingLine();
   if (!started.has(service)) {
     started.add(service);
@@ -367,7 +380,7 @@ function updateComposeHealthProgress(
   }
 
   if (status === "pending") {
-    return;
+    return true;
   }
 
   const finishedLine = formatComposeHealthFinishedLine(status);
@@ -376,10 +389,11 @@ function updateComposeHealthProgress(
 
   if (status === "degraded") {
     unhealthy.add(service);
-    return;
+    return true;
   }
 
   unhealthy.delete(service);
+  return true;
 }
 
 function formatComposeProgressLine(

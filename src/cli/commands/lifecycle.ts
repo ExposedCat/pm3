@@ -127,29 +127,80 @@ async function runLifecycleCommand(
   command: LifecycleRunCommand,
   options: RunCommandOptions,
 ): Promise<void> {
-  const { restartProject, startProject, stopProject } = await import(
-    "../../runtime/project.ts"
-  );
+  const { notifyDaemon } = await import("../../runtime/daemon_ipc.ts");
+  const { listProjectContainers, restartProject, startProject, stopProject } =
+    await import("../../runtime/project.ts");
 
   await withNamedProject(options, command.name, async (_db, project) => {
-    if (command.kind === "start") {
-      await startProject(project, options, {
-        build: command.build,
-        detached: command.detach,
-        noCache: command.noCache,
-      });
-      return;
-    }
+    await notifyDaemon({
+      type: "lifecycle.begin",
+      projectId: project.id,
+      project: project.name,
+      operation: command.kind,
+    });
 
-    if (command.kind === "restart") {
-      await restartProject(project, options, {
-        build: command.build,
-        detached: command.detach,
-        noCache: command.noCache,
-      });
-      return;
-    }
+    try {
+      if (command.kind === "start") {
+        await startProject(project, options, {
+          build: command.build,
+          detached: command.detach,
+          noCache: command.noCache,
+        });
+      } else if (command.kind === "restart") {
+        await restartProject(project, options, {
+          build: command.build,
+          detached: command.detach,
+          noCache: command.noCache,
+        });
+      } else {
+        await stopProject(project, options, { detached: command.detach });
+      }
 
-    await stopProject(project, options, { detached: command.detach });
+      await notifyDaemon({
+        type: "lifecycle.end",
+        projectId: project.id,
+        project: project.name,
+        operation: command.kind,
+        health:
+          command.kind === "stop"
+            ? []
+            : await snapshotProjectHealth(
+                project,
+                options,
+                listProjectContainers,
+              ),
+      });
+    } catch (error) {
+      await notifyDaemon({
+        type: "lifecycle.abort",
+        projectId: project.id,
+        project: project.name,
+        operation: command.kind,
+      });
+      throw error;
+    }
   });
+}
+
+type ProjectRuntime = {
+  name: string;
+  workingDir: string;
+};
+
+type ProjectHealthSnapshot = {
+  service: string;
+  status: "pending" | "healthy" | "degraded";
+};
+
+async function snapshotProjectHealth(
+  project: ProjectRuntime,
+  options: RunCommandOptions,
+  listContainers: typeof import("../../runtime/project.ts").listProjectContainers,
+): Promise<ProjectHealthSnapshot[]> {
+  const containers = await listContainers(project, options);
+  return containers.flatMap((container) =>
+    container.service && container.healthStatus
+      ? [{ service: container.service, status: container.healthStatus }]
+      : [],
+  );
 }

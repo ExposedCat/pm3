@@ -7,6 +7,7 @@ export type ProjectComposeHealthChange = {
 };
 
 export type PodmanEvent = {
+  ID?: string;
   Status?: string;
   health_status?: string;
   Attributes?: Record<string, string>;
