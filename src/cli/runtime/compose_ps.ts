@@ -1,9 +1,13 @@
-import type { ProjectComposeHealthStatus } from "./compose_events.ts";
+import type {
+  ProjectComposeHealthStatus,
+  ProjectComposeServiceStatus,
+} from "./compose_events.ts";
 
 export type ProjectComposeContainer = {
   id: string;
   service: string;
   state: string;
+  serviceStatus: ProjectComposeServiceStatus;
   status: string;
   healthStatus: ProjectComposeHealthStatus | "";
   createdAt: number;
@@ -45,6 +49,7 @@ export function parseComposeContainerJson(
     id: container.Id ?? container.ID ?? "",
     service: getComposeContainerService(container),
     state: container.State ?? "",
+    serviceStatus: parseComposeContainerServiceStatus(container.State ?? ""),
     status: container.Status ?? "",
     healthStatus: parseComposeContainerHealthStatus(container.Status ?? ""),
     createdAt: container.Created ?? 0,
@@ -54,11 +59,27 @@ export function parseComposeContainerJson(
   }));
 }
 
+function parseComposeContainerServiceStatus(
+  state: string,
+): ProjectComposeServiceStatus {
+  const normalized = state.toLowerCase();
+
+  if (normalized === "running") {
+    return "started";
+  }
+
+  if (["created", "exited", "stopped"].includes(normalized)) {
+    return "stopped";
+  }
+
+  return "pending";
+}
+
 function getComposeContainerService(container: PodmanComposeContainer): string {
   return (
     container.Labels?.["io.podman.compose.service"] ??
-    container.Labels?.["com.docker.compose.service"] ??
-    ""
+      container.Labels?.["com.docker.compose.service"] ??
+      ""
   );
 }
 

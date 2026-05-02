@@ -5,9 +5,12 @@ import {
   getComposeEventService,
   getComposeEventWorkingDir,
   getComposeHealthStatus,
+  getComposeServiceStatus,
+  parsePodmanEvent,
   type ProjectComposeHealthChange,
   type ProjectComposeHealthStatus,
-  parsePodmanEvent,
+  type ProjectComposeServiceChange,
+  type ProjectComposeServiceStatus,
 } from "./compose_events.ts";
 import {
   hasComposeFile,
@@ -21,8 +24,8 @@ import {
   startComposeProgress,
 } from "./compose_progress.ts";
 import {
-  type ProjectComposeContainer,
   parseComposeContainerJson,
+  type ProjectComposeContainer,
 } from "./compose_ps.ts";
 import type { ProcessCommand, ProcessResult } from "./process.ts";
 
@@ -30,10 +33,16 @@ export type {
   ProjectComposeContainer,
   ProjectComposeHealthChange,
   ProjectComposeHealthStatus,
+  ProjectComposeServiceChange,
+  ProjectComposeServiceStatus,
 };
 
-type ProjectComposeHealthEvent = ProjectComposeHealthChange & {
+type ProjectComposeStatusEvent = {
   containerId: string;
+  healthStatus: ProjectComposeHealthStatus | "";
+  project: string;
+  service: string;
+  serviceStatus: ProjectComposeServiceStatus | "";
 };
 
 export const STOP_COMPOSE_ARGS = ["down", "--remove-orphans"] as const;
@@ -52,8 +61,7 @@ export async function runProjectCompose(
   const operation = getComposeOperation(args);
   const trackHealth = runOptions.trackHealth ?? true;
   const healthAbortController = new AbortController();
-  const canAbortUnhealthy =
-    trackHealth &&
+  const canAbortUnhealthy = trackHealth &&
     isHealthTrackedOperation(operation) &&
     (!options.runProcess || options.runLineStream);
   const result = await runComposeCommand(project, operation, args, options, {
@@ -158,10 +166,10 @@ export async function listProjectComposeContainers(
   return parseComposeContainerJson(result.stdout ?? "");
 }
 
-export async function watchProjectComposeHealthChanges(
+export async function watchProjectComposeStatusChanges(
   getProjects: () => readonly ComposeProject[],
   options: RunCommandOptions,
-  onChange: (change: ProjectComposeHealthEvent) => void,
+  onChange: (change: ProjectComposeStatusEvent) => void,
 ): Promise<{ stop(): Promise<void> }> {
   if (options.runProcess && !options.runLineStream) {
     return { stop: () => Promise.resolve() };
@@ -185,8 +193,9 @@ export async function watchProjectComposeHealthChanges(
     },
     (line) => {
       const event = parsePodmanEvent(line);
-      const status = getComposeHealthStatus(event);
-      if (!status) {
+      const healthStatus = getComposeHealthStatus(event);
+      const serviceStatus = getComposeServiceStatus(event);
+      if (!healthStatus && !serviceStatus) {
         return;
       }
 
@@ -200,9 +209,10 @@ export async function watchProjectComposeHealthChanges(
       }
 
       onChange({
+        healthStatus,
         project: project.name,
         service,
-        status,
+        serviceStatus,
         containerId: event?.ID ?? "",
       });
     },
@@ -288,9 +298,11 @@ function formatUnhealthyServices(
   projectName: string,
   services: readonly string[],
 ): string {
-  return `Unhealthy services: ${services
-    .map((service) => `${projectName}/${service}`)
-    .join(", ")}`;
+  return `Unhealthy services: ${
+    services
+      .map((service) => `${projectName}/${service}`)
+      .join(", ")
+  }`;
 }
 
 function countWarnings(result: { stdout?: string; stderr?: string }): number {
@@ -325,14 +337,12 @@ async function runComposeCommand(
   const loader = startLoader(`${operation} ${project.name}`, {
     enabled: !options.verbose && !runOptions.detached,
   });
-  const output = runOptions.detached
-    ? createSilentComposeOutput()
-    : {
-        finishLine: loader.finishLine,
-        startLineAfter: loader.startLineAfter,
-        startLine: loader.startLine,
-        writeLineAfter: loader.writeLineAfter,
-      };
+  const output = runOptions.detached ? createSilentComposeOutput() : {
+    finishLine: loader.finishLine,
+    startLineAfter: loader.startLineAfter,
+    startLine: loader.startLine,
+    writeLineAfter: loader.writeLineAfter,
+  };
   let progress = createEmptyComposeProgress();
 
   try {

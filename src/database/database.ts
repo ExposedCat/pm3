@@ -5,6 +5,7 @@ import type { CompiledQuery, QueryResult } from "kysely";
 import { Kysely } from "kysely";
 import { migrateDatabase } from "./migrations.ts";
 import type { ProjectServiceHealthTable } from "./project_health.ts";
+import type { ProjectServiceStateTable } from "./project_state.ts";
 import type { ProjectTable } from "./projects.ts";
 
 const DATABASE_PATH_ENV = "PM3_DATABASE_PATH";
@@ -15,6 +16,7 @@ const DATABASE_FILE_NAME = "pm3.sqlite";
 
 export type DatabaseSchema = {
   projectServiceHealth: ProjectServiceHealthTable;
+  projectServiceState: ProjectServiceStateTable;
   projects: ProjectTable;
 };
 
@@ -23,8 +25,8 @@ export type PM3Database = Kysely<DatabaseSchema>;
 export function resolveDatabasePath(path?: string): string {
   return (
     path ??
-    getEnv(DATABASE_PATH_ENV) ??
-    join(resolveUserDataDir(), DATA_DIR_NAME, DATABASE_FILE_NAME)
+      getEnv(DATABASE_PATH_ENV) ??
+      join(resolveUserDataDir(), DATA_DIR_NAME, DATABASE_FILE_NAME)
   );
 }
 

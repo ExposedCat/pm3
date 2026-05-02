@@ -132,6 +132,9 @@ async function runLifecycleCommand(
     await import("../../runtime/project.ts");
 
   await withNamedProject(options, command.name, async (_db, project) => {
+    const stopState = command.kind === "stop"
+      ? await snapshotProjectState(project, options, listProjectContainers)
+      : [];
     await notifyDaemon({
       type: "lifecycle.begin",
       projectId: project.id,
@@ -161,14 +164,16 @@ async function runLifecycleCommand(
         projectId: project.id,
         project: project.name,
         operation: command.kind,
-        health:
-          command.kind === "stop"
-            ? []
-            : await snapshotProjectHealth(
-                project,
-                options,
-                listProjectContainers,
-              ),
+        health: command.kind === "stop" ? [] : await snapshotProjectHealth(
+          project,
+          options,
+          listProjectContainers,
+        ),
+        state: command.kind === "stop" ? stopState : await snapshotProjectState(
+          project,
+          options,
+          listProjectContainers,
+        ),
       });
     } catch (error) {
       await notifyDaemon({
@@ -195,12 +200,59 @@ type ProjectHealthSnapshot = {
 async function snapshotProjectHealth(
   project: ProjectRuntime,
   options: RunCommandOptions,
-  listContainers: typeof import("../../runtime/project.ts").listProjectContainers,
+  listContainers:
+    typeof import("../../runtime/project.ts").listProjectContainers,
 ): Promise<ProjectHealthSnapshot[]> {
   const containers = await listContainers(project, options);
   return containers.flatMap((container) =>
     container.service && container.healthStatus
       ? [{ service: container.service, status: container.healthStatus }]
-      : [],
+      : []
   );
+}
+
+type ProjectStateSnapshot = {
+  service: string;
+  status: "pending" | "started" | "stopped";
+};
+
+async function snapshotProjectState(
+  project: ProjectRuntime,
+  options: RunCommandOptions,
+  listContainers:
+    typeof import("../../runtime/project.ts").listProjectContainers,
+): Promise<ProjectStateSnapshot[]> {
+  const containers = await listContainers(project, options);
+  const states = new Map<string, ProjectStateSnapshot["status"]>();
+
+  for (const container of containers) {
+    if (!container.service) {
+      continue;
+    }
+
+    states.set(
+      container.service,
+      combineProjectState(
+        states.get(container.service),
+        container.serviceStatus,
+      ),
+    );
+  }
+
+  return [...states].map(([service, status]) => ({ service, status }));
+}
+
+function combineProjectState(
+  current: ProjectStateSnapshot["status"] | undefined,
+  next: ProjectStateSnapshot["status"],
+): ProjectStateSnapshot["status"] {
+  if (current === "pending" || next === "pending") {
+    return "pending";
+  }
+
+  if (current === "started" || next === "started") {
+    return "started";
+  }
+
+  return "stopped";
 }

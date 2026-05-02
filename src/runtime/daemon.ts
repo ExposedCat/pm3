@@ -2,14 +2,21 @@ import type { RunCommandOptions } from "../cli/commands.ts";
 import {
   listProjectComposeContainers,
   type ProjectComposeContainer,
-  watchProjectComposeHealthChanges,
+  watchProjectComposeStatusChanges,
 } from "../cli/runtime/compose.ts";
-import type { ProjectComposeHealthStatus } from "../cli/runtime/compose_events.ts";
+import type {
+  ProjectComposeHealthStatus,
+  ProjectComposeServiceStatus,
+} from "../cli/runtime/compose_events.ts";
 import type { PM3Database } from "../database/database.ts";
 import {
   listProjectServiceHealth,
   setProjectServiceHealth,
 } from "../database/project_health.ts";
+import {
+  listProjectServiceStates,
+  setProjectServiceState,
+} from "../database/project_state.ts";
 import { listProjects } from "../database/projects.ts";
 import { type DaemonMessage, startDaemonIpcServer } from "./daemon_ipc.ts";
 import { startProject } from "./project.ts";
@@ -25,15 +32,15 @@ export async function runDaemon(
   daemonOptions: DaemonRunOptions = {},
 ): Promise<void> {
   console.log("Starting PM3 Daemon...");
-  const signal =
-    daemonOptions.signal ??
+  const signal = daemonOptions.signal ??
     commandOptions.signal ??
     new AbortController().signal;
   const healthStatuses = new Map<string, ProjectComposeHealthStatus>();
+  const serviceStatuses = new Map<string, ProjectComposeServiceStatus>();
   const lifecycleOperations = new Map<string, DaemonLifecycleOperation>();
 
   let ipcServer: { stop(): Promise<void> } | undefined;
-  let healthChanges: { stop(): Promise<void> } | undefined;
+  let statusChanges: { stop(): Promise<void> } | undefined;
   try {
     const startupProjects = await listDaemonProjects(db);
     seedPersistedHealthStatuses(
@@ -41,27 +48,33 @@ export async function runDaemon(
       startupProjects,
       await listProjectServiceHealth(db),
     );
+    seedPersistedServiceStatuses(
+      serviceStatuses,
+      startupProjects,
+      await listProjectServiceStates(db),
+    );
     const enabledProjects = startupProjects.filter(isEnabledProject);
     const startupContainers = await snapshotProjectContainers(
       db,
       commandOptions,
       enabledProjects,
       healthStatuses,
+      serviceStatuses,
       { logKnownChanges: true },
     );
-    await startDownProjects(commandOptions, enabledProjects, startupContainers);
     ipcServer = await startDaemonIpcServer((message) => {
       void handleDaemonMessage(
         db,
         lifecycleOperations,
         healthStatuses,
+        serviceStatuses,
         message,
       );
     });
-    healthChanges = await watchProjectComposeHealthChanges(
+    statusChanges = await watchProjectComposeStatusChanges(
       () => startupProjects,
       commandOptions,
-      ({ project, service, status }) => {
+      ({ healthStatus, project, service, serviceStatus }) => {
         if (lifecycleOperations.has(project)) {
           return;
         }
@@ -71,19 +84,20 @@ export async function runDaemon(
           return;
         }
 
-        void trackHealthStatus(
+        void trackComposeServiceStatuses(
           db,
           healthStatuses,
+          serviceStatuses,
           daemonProject,
-          service,
-          status,
+          { healthStatus, service, serviceStatus },
           { logKnownChanges: true },
         );
       },
     );
+    await startDownProjects(commandOptions, enabledProjects, startupContainers);
     await (daemonOptions.wait ?? waitForDaemonStop)(signal);
   } finally {
-    await healthChanges?.stop();
+    await statusChanges?.stop();
     await ipcServer?.stop();
   }
 }
@@ -114,24 +128,21 @@ async function snapshotProjectContainers(
   options: RunCommandOptions,
   projects: readonly EnabledProject[],
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
-  snapshotOptions: HealthSnapshotOptions = {},
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  snapshotOptions: TrackStatusOptions = {},
 ): Promise<Map<number, ProjectComposeContainer[]>> {
   const containersByProject = new Map<number, ProjectComposeContainer[]>();
 
   for (const project of projects) {
     const containers = await listProjectComposeContainers(project, options);
     containersByProject.set(project.id, containers);
-    for (const container of containers) {
-      if (!container.service || !container.healthStatus) {
-        continue;
-      }
-
-      await trackHealthStatus(
+    for (const status of summarizeComposeContainerStatuses(containers)) {
+      await trackComposeServiceStatuses(
         db,
         healthStatuses,
+        serviceStatuses,
         project,
-        container.service,
-        container.healthStatus,
+        status,
         snapshotOptions,
       );
     }
@@ -143,7 +154,7 @@ async function snapshotProjectContainers(
 type DaemonProject = Awaited<ReturnType<typeof listProjects>>[number];
 type EnabledProject = DaemonProject & { enabled: 1 };
 
-type HealthSnapshotOptions = {
+type TrackStatusOptions = {
   logKnownChanges?: boolean;
 };
 
@@ -152,6 +163,14 @@ type DaemonLifecycleOperation = "restart" | "start" | "stop";
 type PersistedProjectHealth = Awaited<
   ReturnType<typeof listProjectServiceHealth>
 >[number];
+type PersistedProjectState = Awaited<
+  ReturnType<typeof listProjectServiceStates>
+>[number];
+type ServiceStatusSnapshot = {
+  healthStatus: ProjectComposeHealthStatus | "";
+  service: string;
+  serviceStatus: ProjectComposeServiceStatus | "";
+};
 
 function isEnabledProject(project: DaemonProject): project is EnabledProject {
   return project.enabled === 1;
@@ -161,6 +180,7 @@ async function handleDaemonMessage(
   db: PM3Database,
   lifecycleOperations: Map<string, DaemonLifecycleOperation>,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>,
   message: DaemonMessage,
 ): Promise<void> {
   if (message.type === "lifecycle.begin") {
@@ -174,6 +194,11 @@ async function handleDaemonMessage(
   }
 
   if (message.operation === "stop") {
+    await markProjectServicesStopped(
+      db,
+      serviceStatuses,
+      { id: message.projectId, name: message.project },
+    );
     lifecycleOperations.set(message.project, message.operation);
     return;
   }
@@ -189,6 +214,47 @@ async function handleDaemonMessage(
       { logKnownChanges: true },
     );
   }
+  for (const state of message.state) {
+    await trackServiceStatus(
+      db,
+      serviceStatuses,
+      { id: message.projectId, name: message.project },
+      state.service,
+      state.status,
+      { logKnownChanges: true },
+    );
+  }
+}
+
+async function trackComposeServiceStatuses(
+  db: PM3Database,
+  healthStatuses: Map<string, ProjectComposeHealthStatus>,
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  project: Pick<DaemonProject, "id" | "name">,
+  status: ServiceStatusSnapshot,
+  options: TrackStatusOptions,
+): Promise<void> {
+  if (status.serviceStatus) {
+    await trackServiceStatus(
+      db,
+      serviceStatuses,
+      project,
+      status.service,
+      status.serviceStatus,
+      options,
+    );
+  }
+
+  if (status.healthStatus) {
+    await trackHealthStatus(
+      db,
+      healthStatuses,
+      project,
+      status.service,
+      status.healthStatus,
+      options,
+    );
+  }
 }
 
 async function trackHealthStatus(
@@ -197,9 +263,9 @@ async function trackHealthStatus(
   project: Pick<DaemonProject, "id" | "name">,
   service: string,
   status: ProjectComposeHealthStatus,
-  options: HealthSnapshotOptions,
+  options: TrackStatusOptions,
 ): Promise<void> {
-  const key = formatHealthStatusKey(project.name, service);
+  const key = formatProjectServiceKey(project.name, service);
   const previousStatus = healthStatuses.get(key);
   healthStatuses.set(key, status);
   await setProjectServiceHealth(db, {
@@ -212,6 +278,53 @@ async function trackHealthStatus(
   }
 }
 
+async function trackServiceStatus(
+  db: PM3Database,
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  project: Pick<DaemonProject, "id" | "name">,
+  service: string,
+  status: ProjectComposeServiceStatus,
+  options: TrackStatusOptions,
+): Promise<void> {
+  const key = formatProjectServiceKey(project.name, service);
+  const previousStatus = serviceStatuses.get(key);
+  serviceStatuses.set(key, status);
+  await setProjectServiceState(db, {
+    projectId: project.id,
+    service,
+    status,
+  });
+  if (options.logKnownChanges && previousStatus !== status) {
+    console.log(`${project.name}/${service} ${status}`);
+  }
+}
+
+async function markProjectServicesStopped(
+  db: PM3Database,
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  project: Pick<DaemonProject, "id" | "name">,
+): Promise<void> {
+  const services = new Set<string>();
+
+  for (const key of serviceStatuses.keys()) {
+    const [projectName, service] = key.split("/", 2);
+    if (projectName === project.name && service) {
+      services.add(service);
+    }
+  }
+
+  for (const service of services) {
+    await trackServiceStatus(
+      db,
+      serviceStatuses,
+      project,
+      service,
+      "stopped",
+      { logKnownChanges: true },
+    );
+  }
+}
+
 function isProjectDown(
   containers: readonly ProjectComposeContainer[],
 ): boolean {
@@ -220,11 +333,11 @@ function isProjectDown(
   }
 
   return containers.every((container) =>
-    ["created", "exited", "stopped"].includes(container.state.toLowerCase()),
+    ["created", "exited", "stopped"].includes(container.state.toLowerCase())
   );
 }
 
-function formatHealthStatusKey(project: string, service: string): string {
+function formatProjectServiceKey(project: string, service: string): string {
   return `${project}/${service}`;
 }
 
@@ -243,10 +356,110 @@ function seedPersistedHealthStatuses(
     }
 
     healthStatuses.set(
-      formatHealthStatusKey(project.name, health.service),
+      formatProjectServiceKey(project.name, health.service),
       health.status,
     );
   }
+}
+
+function seedPersistedServiceStatuses(
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  projects: readonly DaemonProject[],
+  persistedStates: readonly PersistedProjectState[],
+): void {
+  const projectsById = new Map(
+    projects.map((project) => [project.id, project]),
+  );
+  for (const state of persistedStates) {
+    const project = projectsById.get(state.projectId);
+    if (!project) {
+      continue;
+    }
+
+    serviceStatuses.set(
+      formatProjectServiceKey(project.name, state.service),
+      state.status,
+    );
+  }
+}
+
+function summarizeComposeContainerStatuses(
+  containers: readonly ProjectComposeContainer[],
+): ServiceStatusSnapshot[] {
+  const statuses = new Map<string, ServiceStatusSnapshot>();
+
+  for (const container of containers) {
+    if (!container.service) {
+      continue;
+    }
+
+    const previous = statuses.get(container.service);
+    statuses.set(container.service, {
+      service: container.service,
+      serviceStatus: combineServiceStatuses(
+        previous?.serviceStatus ?? "",
+        container.serviceStatus,
+      ),
+      healthStatus: combineHealthStatuses(
+        previous?.healthStatus ?? "",
+        container.healthStatus,
+      ),
+    });
+  }
+
+  return [...statuses.values()];
+}
+
+function combineServiceStatuses(
+  current: ProjectComposeServiceStatus | "",
+  next: ProjectComposeServiceStatus,
+): ProjectComposeServiceStatus {
+  const currentRank = rankServiceStatus(current);
+  const nextRank = rankServiceStatus(next);
+
+  return nextRank > currentRank ? next : (current || next);
+}
+
+function rankServiceStatus(status: ProjectComposeServiceStatus | ""): number {
+  if (status === "pending") {
+    return 3;
+  }
+
+  if (status === "started") {
+    return 2;
+  }
+
+  if (status === "stopped") {
+    return 1;
+  }
+
+  return 0;
+}
+
+function combineHealthStatuses(
+  current: ProjectComposeHealthStatus | "",
+  next: ProjectComposeHealthStatus | "",
+): ProjectComposeHealthStatus | "" {
+  const currentRank = rankHealthStatus(current);
+  const nextRank = rankHealthStatus(next);
+
+  return nextRank > currentRank ? next : (current || next);
+}
+
+function rankHealthStatus(status: ProjectComposeHealthStatus | ""): number {
+  if (status === "degraded") {
+    return 3;
+  }
+
+  if (status === "pending") {
+    return 2;
+  }
+
+  if (status === "healthy") {
+    return 1;
+  }
+
+  return 0;
 }
 
 function findDaemonProject(
