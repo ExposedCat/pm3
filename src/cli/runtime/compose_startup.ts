@@ -68,7 +68,6 @@ export async function createComposeStartupTracker(
   if (!config) {
     return undefined;
   }
-
   const state = new Map<string, ComposeStartupServiceState>(
     config.services.map((
       service,

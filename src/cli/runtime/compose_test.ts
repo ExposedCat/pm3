@@ -443,6 +443,65 @@ Deno.test({
 
 Deno.test({
   name:
+    "compose start returns without cleanup when unhealthy services are not fatal under startup policy",
+  sanitizeResources: false,
+  async fn() {
+    await withTempComposeProject(async ({ project }) => {
+      let emitEvent: ((line: string) => void) | undefined;
+      const commands: ProcessCommand[] = [];
+      const lines = await captureConsoleLog(async () => {
+        await runProjectCompose(project, ["up", "-d"], {
+          runLineStream: (_command, onLine) => {
+            emitEvent = onLine;
+            return Promise.resolve({ stop: () => Promise.resolve() });
+          },
+          runProcess: (command) => {
+            commands.push(command);
+            if (isComposeResolvedConfigCommand(command)) {
+              return Promise.resolve({
+                code: 0,
+                stdout:
+                  "services:\n  api:\n    depends_on:\n      db:\n        condition: service_healthy\n  prebuilt: {}\n  db: {}\nx-pm3:\n  startup:\n    mode: watcher\n    required_services:\n      - prebuilt\n",
+              });
+            }
+            if (isComposeConfigCommand(command)) {
+              return Promise.resolve({
+                code: 0,
+                stdout: "api\nprebuilt\ndb\n",
+              });
+            }
+
+            emitEvent?.(composeEvent("start", "prebuilt"));
+            emitEvent?.(composeEvent("start", "db"));
+            emitEvent?.(healthEvent("unhealthy", "db"));
+            return Promise.resolve({ code: 130 });
+          },
+        });
+      });
+
+      assertEquals(
+        commands.map(({ args, command }) => ({ args, command })),
+        [
+          { command: "podman-compose", args: ["config"] },
+          { command: "podman-compose", args: ["config", "--services"] },
+          { command: "podman-compose", args: ["--verbose", "up", "-d"] },
+        ],
+      );
+      assertEquals(lines, [
+        "Starting api/api",
+        "Starting api/prebuilt",
+        "Starting api/db",
+        "Started api/prebuilt",
+        "Started api/db",
+        "    \x1b[33mChecking health\x1b[0m...",
+        "    \x1b[31mUnhealthy\x1b[0m",
+      ]);
+    });
+  },
+});
+
+Deno.test({
+  name:
     "compose start fails when all remaining services are permanently blocked",
   sanitizeResources: false,
   async fn() {

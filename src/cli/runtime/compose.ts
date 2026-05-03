@@ -61,7 +61,6 @@ export async function runProjectCompose(
 ): Promise<void> {
   const operation = getComposeOperation(args);
   const trackHealth = runOptions.trackHealth ?? true;
-  const healthAbortController = new AbortController();
   const startupAbortController = new AbortController();
   const canAbortUnhealthy = trackHealth &&
     isHealthTrackedOperation(operation) &&
@@ -70,6 +69,10 @@ export async function runProjectCompose(
   const runProcess = options.runProcess ?? runSystemProcess;
   const startupTracker = canAbortUnhealthy
     ? await createComposeStartupTracker(project, runProcess)
+    : undefined;
+  const failOnUnhealthy = canAbortUnhealthy && !startupTracker;
+  const healthAbortController = canAbortUnhealthy
+    ? new AbortController()
     : undefined;
   const result = await runComposeCommand(project, operation, args, options, {
     detached: runOptions.detached,
@@ -92,12 +95,12 @@ export async function runProjectCompose(
       }
       : undefined,
     onUnhealthy: canAbortUnhealthy
-      ? () => healthAbortController.abort()
+      ? () => healthAbortController?.abort()
       : undefined,
     signal: canAbortUnhealthy
       ? combineAbortSignals(
         options.signal,
-        healthAbortController.signal,
+        healthAbortController?.signal,
         startupAbortController.signal,
       )
       : options.signal,
@@ -118,13 +121,16 @@ export async function runProjectCompose(
     }
 
     const unhealthyServices = result.progress.unhealthyServices();
-    if (unhealthyServices.length > 0) {
+    if (failOnUnhealthy && unhealthyServices.length > 0) {
       await stopStartedComposeServices(project, options, {
         detached: runOptions.detached,
       });
       throw inputError(
         formatUnhealthyServices(project.name, unhealthyServices),
       );
+    }
+    if (unhealthyServices.length > 0) {
+      return;
     }
 
     if (options.signal?.aborted && isHealthTrackedOperation(operation)) {
@@ -145,7 +151,7 @@ export async function runProjectCompose(
   }
 
   const unhealthyServices = result.progress.unhealthyServices();
-  if (unhealthyServices.length > 0) {
+  if (failOnUnhealthy && unhealthyServices.length > 0) {
     await stopStartedComposeServices(project, options, {
       detached: runOptions.detached,
     });
@@ -414,7 +420,9 @@ async function runComposeCommand(
 
     const command: ProcessCommand = {
       command: PODMAN_COMPOSE_COMMAND,
-      args: progress.captureComposeCommands ? ["--verbose", ...args] : args,
+      args: progress.captureComposeCommands
+        ? ["--verbose", ...args]
+        : args,
       cwd: project.workingDir,
       detached: runOptions.detached,
     };
