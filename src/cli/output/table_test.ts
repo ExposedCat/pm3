@@ -31,13 +31,13 @@ Deno.test("formatTable applies custom cell formatting", () => {
     formatTable(
       [
         ["NAME", "STATE"],
-        ["api", "pending"],
+        ["api", "starting"],
       ],
       {
         formatCell: (cell) =>
           cell.header === "STATE" ? `[${cell.value.trimEnd()}]` : cell.value,
       },
     ),
-    ["NAME  [STATE]", "api   [pending]"].join("\n"),
+    ["NAME  [STATE]", "api   [starting]"].join("\n"),
   );
 });

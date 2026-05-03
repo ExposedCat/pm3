@@ -1,5 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { join, resolve } from "@std/path";
+import type { DetachedLifecycleLaunch } from "../commands.ts";
 import type { ProcessCommand, ProcessResult } from "../runtime/process.ts";
 import { runCli, runCliProcess, withTempCli } from "../test_utils.ts";
 import "../../database/database.ts";
@@ -28,21 +29,25 @@ Deno.test({
           command: "podman-compose",
           args: ["up", "-d"],
           cwd: resolve(workdir),
+          detached: false,
         },
         {
           command: "podman-compose",
           args: ["down", "--remove-orphans"],
           cwd: resolve(workdir),
+          detached: false,
         },
         {
           command: "podman-compose",
           args: ["down", "--remove-orphans"],
           cwd: resolve(workdir),
+          detached: false,
         },
         {
           command: "podman-compose",
           args: ["up", "-d"],
           cwd: resolve(workdir),
+          detached: false,
         },
       ]);
     });
@@ -109,6 +114,7 @@ Deno.test({
           command: "podman-compose",
           args: ["up", "-d"],
           cwd: resolve(workdir),
+          detached: false,
           verbose: true,
         },
       ]);
@@ -159,20 +165,11 @@ Deno.test({
 
       for (const scenario of scenarios) {
         const regularCommands: ProcessCommand[] = [];
-        const detachedCommands: ProcessCommand[] = [];
+        const detachedLaunches: DetachedLifecycleLaunch[] = [];
         const runRegularProcess = (
           command: ProcessCommand,
         ): Promise<ProcessResult> => {
           regularCommands.push(command);
-          return Promise.resolve({
-            code: 0,
-            stderr: "WARN: image uses latest tag",
-          });
-        };
-        const runDetachedProcess = (
-          command: ProcessCommand,
-        ): Promise<ProcessResult> => {
-          detachedCommands.push(command);
           return Promise.resolve({
             code: 0,
             stderr: "WARN: image uses latest tag",
@@ -187,36 +184,73 @@ Deno.test({
         const detachedOutput = await runCli(
           [...scenario.detachedArgs],
           databasePath,
-          runDetachedProcess,
+          undefined,
+          (launch) => {
+            detachedLaunches.push(launch);
+            return Promise.resolve();
+          },
         );
 
         assertEquals(regularOutput.includes("Finished with 1 warnings"), true);
         assertEquals(detachedOutput, "");
         assertEquals(
-          regularCommands.map(({ args, command, cwd }) => ({
+          regularCommands.map(({ args, command, cwd, detached }) => ({
             args,
             command,
             cwd,
+            detached,
           })),
           scenario.expectedCommands.map((args) => ({
             command: "podman-compose",
             args,
             cwd: resolve(workdir),
+            detached: false,
           })),
         );
         assertEquals(
-          detachedCommands.map(({ args, command, cwd }) => ({
-            args,
-            command,
-            cwd,
-          })),
-          regularCommands.map(({ args, command, cwd }) => ({
-            args,
-            command,
-            cwd,
-          })),
+          detachedLaunches,
+          [
+            {
+              args: scenario.args,
+              env: { PM3_DATABASE_PATH: databasePath },
+            },
+          ],
         );
       }
+    });
+  },
+});
+
+Deno.test({
+  name: "detached rebuild waits for build before launching background pm3",
+  sanitizeResources: false,
+  async fn() {
+    await withTempCli(async ({ databasePath, root }) => {
+      const workdir = join(root, "api");
+      await Deno.mkdir(workdir);
+      await runCli(["create", workdir, "--name", "api"], databasePath);
+
+      const launches: DetachedLifecycleLaunch[] = [];
+
+      await runCli(
+        ["start", "--build", "--detach", "api"],
+        databasePath,
+        undefined,
+        (launch) => {
+          launches.push(launch);
+          return Promise.resolve();
+        },
+      );
+
+      assertEquals(
+        launches,
+        [
+          {
+            args: ["start", "--build", "api"],
+            env: { PM3_DATABASE_PATH: databasePath },
+          },
+        ],
+      );
     });
   },
 });
@@ -244,26 +278,31 @@ Deno.test({
           command: "podman-compose",
           args: ["build"],
           cwd: resolve(workdir),
+          detached: false,
         },
         {
           command: "podman-compose",
           args: ["up", "-d", "--force-recreate"],
           cwd: resolve(workdir),
+          detached: false,
         },
         {
           command: "podman-compose",
           args: ["down", "--remove-orphans"],
           cwd: resolve(workdir),
+          detached: false,
         },
         {
           command: "podman-compose",
           args: ["build"],
           cwd: resolve(workdir),
+          detached: false,
         },
         {
           command: "podman-compose",
           args: ["up", "-d", "--force-recreate"],
           cwd: resolve(workdir),
+          detached: false,
         },
       ]);
     });
@@ -292,48 +331,13 @@ Deno.test({
           command: "podman-compose",
           args: ["build", "--no-cache"],
           cwd: resolve(workdir),
+          detached: false,
         },
         {
           command: "podman-compose",
           args: ["up", "-d", "--force-recreate"],
           cwd: resolve(workdir),
-        },
-      ]);
-    });
-  },
-});
-
-Deno.test({
-  name: "detached rebuild waits for build before detaching recreated containers",
-  sanitizeResources: false,
-  async fn() {
-    await withTempCli(async ({ databasePath, root }) => {
-      const workdir = join(root, "api");
-      await Deno.mkdir(workdir);
-      await runCli(["create", workdir, "--name", "api"], databasePath);
-
-      const commands: ProcessCommand[] = [];
-      const runProcess = (command: ProcessCommand): Promise<ProcessResult> => {
-        commands.push(command);
-        return Promise.resolve({ code: 0 });
-      };
-
-      await runCli(
-        ["start", "--build", "--detach", "api"],
-        databasePath,
-        runProcess,
-      );
-
-      assertEquals(commands, [
-        {
-          command: "podman-compose",
-          args: ["build"],
-          cwd: resolve(workdir),
-        },
-        {
-          command: "podman-compose",
-          args: ["up", "-d", "--force-recreate"],
-          cwd: resolve(workdir),
+          detached: false,
         },
       ]);
     });

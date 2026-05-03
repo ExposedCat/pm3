@@ -1,11 +1,13 @@
 import type {
   CliCommand,
   CommandDefinition,
+  DetachedLifecycleLaunch,
   RunCommandOptions,
 } from "../commands.ts";
 import { withNamedProject } from "../commands.ts";
 import { usageError } from "../errors.ts";
 import { requireArgument } from "../utils.ts";
+import { basename, fromFileUrl } from "@std/path";
 
 type LifecycleCommandKind = "start" | "stop" | "restart";
 
@@ -127,11 +129,19 @@ async function runLifecycleCommand(
   command: LifecycleRunCommand,
   options: RunCommandOptions,
 ): Promise<void> {
-  const { notifyDaemon } = await import("../../runtime/daemon_ipc.ts");
-  const { listProjectContainers, restartProject, startProject, stopProject } =
-    await import("../../runtime/project.ts");
-
   await withNamedProject(options, command.name, async (_db, project) => {
+    if (command.detach) {
+      await launchDetachedLifecycle(command, options);
+      return;
+    }
+
+    const { notifyDaemon } = await import("../../runtime/daemon_ipc.ts");
+    const {
+      listProjectContainers,
+      restartProject,
+      startProject,
+      stopProject,
+    } = await import("../../runtime/project.ts");
     const stopState = command.kind === "stop"
       ? await snapshotProjectState(project, options, listProjectContainers)
       : [];
@@ -187,6 +197,78 @@ async function runLifecycleCommand(
   });
 }
 
+async function launchDetachedLifecycle(
+  command: LifecycleRunCommand,
+  options: RunCommandOptions,
+): Promise<void> {
+  const launch = {
+    args: createDetachedLifecycleArgs(command, options.verbose ?? false),
+    env: createDetachedLifecycleEnv(options),
+  } satisfies DetachedLifecycleLaunch;
+
+  if (options.launchDetachedLifecycle) {
+    await options.launchDetachedLifecycle(launch);
+    return;
+  }
+
+  const invocation = createDetachedLifecycleInvocation(launch.args);
+  const child = new Deno.Command(invocation.command, {
+    args: invocation.args,
+    env: launch.env,
+    stdin: "null",
+    stdout: "null",
+    stderr: "null",
+  }).spawn();
+  child.unref();
+}
+
+function createDetachedLifecycleArgs(
+  command: LifecycleRunCommand,
+  verbose: boolean,
+): string[] {
+  return [
+    ...(verbose ? ["--verbose"] : []),
+    command.kind,
+    ...(command.build ? ["--build"] : []),
+    ...(command.noCache ? ["--no-cache"] : []),
+    command.name,
+  ];
+}
+
+function createDetachedLifecycleEnv(
+  options: RunCommandOptions,
+): Record<string, string> {
+  return options.databasePath
+    ? { PM3_DATABASE_PATH: options.databasePath }
+    : {};
+}
+
+function createDetachedLifecycleInvocation(
+  commandArgs: readonly string[],
+): { command: string; args: string[] } {
+  const execPath = Deno.execPath();
+  if (basename(execPath) !== "deno") {
+    return {
+      command: execPath,
+      args: [...commandArgs],
+    };
+  }
+
+  return {
+    command: execPath,
+    args: [
+      "run",
+      "--allow-read",
+      "--allow-write",
+      "--allow-env",
+      "--allow-net",
+      "--allow-run=deno,pm3,podman-compose,podman",
+      fromFileUrl(new URL("../main.ts", import.meta.url)),
+      ...commandArgs,
+    ],
+  };
+}
+
 type ProjectRuntime = {
   name: string;
   workingDir: string;
@@ -194,7 +276,7 @@ type ProjectRuntime = {
 
 type ProjectHealthSnapshot = {
   service: string;
-  status: "pending" | "healthy" | "degraded";
+  status: "starting" | "healthy" | "degraded";
 };
 
 async function snapshotProjectHealth(
@@ -213,7 +295,7 @@ async function snapshotProjectHealth(
 
 type ProjectStateSnapshot = {
   service: string;
-  status: "pending" | "started" | "stopped";
+  status: "starting" | "started" | "stopping" | "stopped";
 };
 
 async function snapshotProjectState(
@@ -246,8 +328,12 @@ function combineProjectState(
   current: ProjectStateSnapshot["status"] | undefined,
   next: ProjectStateSnapshot["status"],
 ): ProjectStateSnapshot["status"] {
-  if (current === "pending" || next === "pending") {
-    return "pending";
+  if (current === "starting" || next === "starting") {
+    return "starting";
+  }
+
+  if (current === "stopping" || next === "stopping") {
+    return "stopping";
   }
 
   if (current === "started" || next === "started") {

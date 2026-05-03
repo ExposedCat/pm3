@@ -1,5 +1,9 @@
 import { join } from "@std/path";
-import { parseArgs, runCommand } from "./commands.ts";
+import {
+  type DetachedLifecycleLaunch,
+  parseArgs,
+  runCommand,
+} from "./commands.ts";
 import { formatCliError } from "./errors.ts";
 import { runCliMain } from "./main.ts";
 import type { ProcessCommand, ProcessResult } from "./runtime/process.ts";
@@ -8,6 +12,9 @@ export async function runCli(
   args: string[],
   databasePath?: string,
   runProcess?: (command: ProcessCommand) => Promise<ProcessResult>,
+  launchDetachedLifecycle?: (
+    command: DetachedLifecycleLaunch,
+  ) => Promise<void>,
 ): Promise<string> {
   const lines: string[] = [];
   const originalLog = console.log;
@@ -17,7 +24,11 @@ export async function runCli(
   };
 
   try {
-    await runCommand(parseArgs(args), { databasePath, runProcess });
+    await runCommand(parseArgs(args), {
+      databasePath,
+      launchDetachedLifecycle,
+      runProcess,
+    });
     return lines.join("\n");
   } finally {
     console.log = originalLog;

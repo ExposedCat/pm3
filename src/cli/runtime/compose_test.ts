@@ -5,7 +5,8 @@ import { runProjectCompose } from "./compose.ts";
 import type { ProcessCommand } from "./process.ts";
 
 Deno.test({
-  name: "non-verbose compose output prints notices below the affected progress step",
+  name:
+    "non-verbose compose output prints notices below the affected progress step",
   sanitizeResources: false,
   async fn() {
     await withTempComposeProject(async ({ project }) => {
@@ -17,13 +18,20 @@ Deno.test({
             return Promise.resolve({ stop: () => Promise.resolve() });
           },
           runProcess: (command) => {
+            if (isComposeResolvedConfigCommand(command)) {
+              return Promise.resolve({
+                code: 0,
+                stdout: "services:\n  web: {}\n",
+              });
+            }
             if (isComposeConfigCommand(command)) {
               return Promise.resolve({ code: 0, stdout: "web\n" });
             }
 
             command.onOutput?.({
               stream: "stderr",
-              text: "podman start pm3_web_1\nWARN: pm3_web_1 image uses latest tag\n",
+              text:
+                "podman start pm3_web_1\nWARN: pm3_web_1 image uses latest tag\n",
             });
             emitEvent?.(composeEvent("start", "web"));
             return Promise.resolve({
@@ -44,7 +52,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "compose output attributes overlapping service names to the longest match",
+  name:
+    "compose output attributes overlapping service names to the longest match",
   sanitizeResources: false,
   async fn() {
     await withTempComposeProject(async ({ project }) => {
@@ -56,6 +65,12 @@ Deno.test({
             return Promise.resolve({ stop: () => Promise.resolve() });
           },
           runProcess: (command) => {
+            if (isComposeResolvedConfigCommand(command)) {
+              return Promise.resolve({
+                code: 0,
+                stdout: "services:\n  web: {}\n  web_api: {}\n",
+              });
+            }
             if (isComposeConfigCommand(command)) {
               return Promise.resolve({ code: 0, stdout: "web\nweb_api\n" });
             }
@@ -93,6 +108,12 @@ Deno.test({
           runLineStream: () =>
             Promise.resolve({ stop: () => Promise.resolve() }),
           runProcess: (command) => {
+            if (isComposeResolvedConfigCommand(command)) {
+              return Promise.resolve({
+                code: 0,
+                stdout: "services:\n  web: {}\n  worker: {}\n",
+              });
+            }
             if (isComposeConfigCommand(command)) {
               return Promise.resolve({
                 code: 0,
@@ -125,6 +146,12 @@ Deno.test({
             return Promise.resolve({ stop: () => Promise.resolve() });
           },
           runProcess: (command) => {
+            if (isComposeResolvedConfigCommand(command)) {
+              return Promise.resolve({
+                code: 0,
+                stdout: "services:\n  web: {}\n",
+              });
+            }
             if (isComposeConfigCommand(command)) {
               return Promise.resolve({ code: 0, stdout: "web\n" });
             }
@@ -161,13 +188,20 @@ Deno.test({
             return Promise.resolve({ stop: () => Promise.resolve() });
           },
           runProcess: (command) => {
+            if (isComposeResolvedConfigCommand(command)) {
+              return Promise.resolve({
+                code: 0,
+                stdout: "services:\n  web: {}\n",
+              });
+            }
             if (isComposeConfigCommand(command)) {
               return Promise.resolve({ code: 0, stdout: "web\n" });
             }
 
             command.onOutput?.({
               stream: "stderr",
-              text: "podman start pm3_web_1\nWARN: pm3_web_1 image uses a very long latest tag\n",
+              text:
+                "podman start pm3_web_1\nWARN: pm3_web_1 image uses a very long latest tag\n",
             });
             emitEvent?.(composeEvent("start", "web"));
             return Promise.resolve({
@@ -191,10 +225,12 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     await withTempComposeProject(async ({ project }) => {
-      for (const [args, status, expected] of [
-        [["stop"], "stop", ["Stopping api/web", "Stopped api/web"]],
-        [["down"], "remove", ["Removing api/web", "Removed api/web"]],
-      ] as const) {
+      for (
+        const [args, status, expected] of [
+          [["stop"], "stop", ["Stopping api/web", "Stopped api/web"]],
+          [["down"], "remove", ["Removing api/web", "Removed api/web"]],
+        ] as const
+      ) {
         let emitEvent: ((line: string) => void) | undefined;
         const lines = await captureConsoleLog(async () => {
           await runProjectCompose(project, args, {
@@ -236,6 +272,12 @@ Deno.test({
             return Promise.resolve({ stop: () => Promise.resolve() });
           },
           runProcess: (command) => {
+            if (isComposeResolvedConfigCommand(command)) {
+              return Promise.resolve({
+                code: 0,
+                stdout: "services:\n  web: {}\n",
+              });
+            }
             if (isComposeConfigCommand(command)) {
               return Promise.resolve({ code: 0, stdout: "web\n" });
             }
@@ -276,6 +318,12 @@ Deno.test({
               },
               runProcess: (command) => {
                 commands.push(command);
+                if (isComposeResolvedConfigCommand(command)) {
+                  return Promise.resolve({
+                    code: 0,
+                    stdout: "services:\n  web: {}\n",
+                  });
+                }
                 if (isComposeConfigCommand(command)) {
                   return Promise.resolve({ code: 0, stdout: "web\n" });
                 }
@@ -306,6 +354,7 @@ Deno.test({
       assertEquals(
         commands.map(({ args, command }) => ({ args, command })),
         [
+          { command: "podman-compose", args: ["config"] },
           { command: "podman-compose", args: ["config", "--services"] },
           { command: "podman-compose", args: ["--verbose", "up", "-d"] },
           { command: "podman-compose", args: ["config", "--services"] },
@@ -323,6 +372,160 @@ Deno.test({
         "Stopping api/web",
         "Stopped api/web",
       ]);
+    });
+  },
+});
+
+Deno.test({
+  name:
+    "compose start fails when a required service becomes permanently blocked by deps",
+  sanitizeResources: false,
+  async fn() {
+    await withTempComposeProject(async ({ project }) => {
+      let emitEvent: ((line: string) => void) | undefined;
+      let aborted = false;
+      const commands: ProcessCommand[] = [];
+
+      await assertRejects(
+        () =>
+          runProjectCompose(project, ["up", "-d"], {
+            runLineStream: (_command, onLine) => {
+              emitEvent = onLine;
+              return Promise.resolve({ stop: () => Promise.resolve() });
+            },
+            runProcess: (command) => {
+              commands.push(command);
+              if (isComposeResolvedConfigCommand(command)) {
+                return Promise.resolve({
+                  code: 0,
+                  stdout:
+                    "services:\n  api:\n    depends_on:\n      db:\n        condition: service_healthy\n  db: {}\nx-pm3:\n  startup:\n    required_services:\n      - api\n",
+                });
+              }
+              if (isComposeConfigCommand(command)) {
+                return Promise.resolve({ code: 0, stdout: "api\ndb\n" });
+              }
+              if (isComposeDownCommand(command)) {
+                emitEvent?.(composeEvent("remove", "db"));
+                return Promise.resolve({ code: 0 });
+              }
+
+              command.signal?.addEventListener("abort", () => {
+                aborted = true;
+              });
+              emitEvent?.(composeEvent("start", "db"));
+              emitEvent?.(healthEvent("starting", "db"));
+              emitEvent?.(healthEvent("unhealthy", "db"));
+              return Promise.resolve({ code: 0 });
+            },
+          }),
+        Error,
+        "Required services permanently unstartable: api",
+      );
+
+      assertEquals(aborted, true);
+      assertEquals(
+        commands.map(({ args, command }) => ({ args, command })),
+        [
+          { command: "podman-compose", args: ["config"] },
+          { command: "podman-compose", args: ["config", "--services"] },
+          { command: "podman-compose", args: ["--verbose", "up", "-d"] },
+          { command: "podman-compose", args: ["config", "--services"] },
+          {
+            command: "podman-compose",
+            args: ["--verbose", "down", "--remove-orphans"],
+          },
+        ],
+      );
+    });
+  },
+});
+
+Deno.test({
+  name:
+    "compose start fails when all remaining services are permanently blocked",
+  sanitizeResources: false,
+  async fn() {
+    await withTempComposeProject(async ({ project }) => {
+      let emitEvent: ((line: string) => void) | undefined;
+
+      await assertRejects(
+        () =>
+          runProjectCompose(project, ["up", "-d"], {
+            runLineStream: (_command, onLine) => {
+              emitEvent = onLine;
+              return Promise.resolve({ stop: () => Promise.resolve() });
+            },
+            runProcess: (command) => {
+              if (isComposeResolvedConfigCommand(command)) {
+                return Promise.resolve({
+                  code: 0,
+                  stdout:
+                    "services:\n  api:\n    depends_on:\n      db:\n        condition: service_healthy\n  worker:\n    depends_on:\n      db:\n        condition: service_healthy\n  db: {}\nx-pm3:\n  startup:\n    stop_when_unstartable: all\n",
+                });
+              }
+              if (isComposeConfigCommand(command)) {
+                return Promise.resolve({
+                  code: 0,
+                  stdout: "api\nworker\ndb\n",
+                });
+              }
+              if (isComposeDownCommand(command)) {
+                emitEvent?.(composeEvent("remove", "db"));
+                return Promise.resolve({ code: 0 });
+              }
+
+              emitEvent?.(composeEvent("start", "db"));
+              emitEvent?.(healthEvent("unhealthy", "db"));
+              return Promise.resolve({ code: 0 });
+            },
+          }),
+        Error,
+        "Startup permanently blocked: api, worker",
+      );
+    });
+  },
+});
+
+Deno.test({
+  name:
+    "compose start fails when a service_started dependency exits before the consumer starts",
+  sanitizeResources: false,
+  async fn() {
+    await withTempComposeProject(async ({ project }) => {
+      let emitEvent: ((line: string) => void) | undefined;
+
+      await assertRejects(
+        () =>
+          runProjectCompose(project, ["up", "-d"], {
+            runLineStream: (_command, onLine) => {
+              emitEvent = onLine;
+              return Promise.resolve({ stop: () => Promise.resolve() });
+            },
+            runProcess: (command) => {
+              if (isComposeResolvedConfigCommand(command)) {
+                return Promise.resolve({
+                  code: 0,
+                  stdout:
+                    "services:\n  api:\n    depends_on:\n      db:\n        condition: service_started\n  db: {}\nx-pm3:\n  startup:\n    required_services:\n      - api\n",
+                });
+              }
+              if (isComposeConfigCommand(command)) {
+                return Promise.resolve({ code: 0, stdout: "api\ndb\n" });
+              }
+              if (isComposeDownCommand(command)) {
+                emitEvent?.(composeEvent("remove", "db"));
+                return Promise.resolve({ code: 0 });
+              }
+
+              emitEvent?.(composeEvent("start", "db"));
+              emitEvent?.(composeEvent("stop", "db"));
+              return Promise.resolve({ code: 0 });
+            },
+          }),
+        Error,
+        "Required services permanently unstartable: api",
+      );
     });
   },
 });
@@ -348,6 +551,12 @@ Deno.test({
                 },
                 runProcess: (command) => {
                   commands.push(command);
+                  if (isComposeResolvedConfigCommand(command)) {
+                    return Promise.resolve({
+                      code: 0,
+                      stdout: "services:\n  web: {}\n",
+                    });
+                  }
                   if (isComposeConfigCommand(command)) {
                     return Promise.resolve({ code: 0, stdout: "web\n" });
                   }
@@ -386,13 +595,18 @@ Deno.test({
         [
           {
             command: "podman-compose",
+            args: ["config"],
+            detached: undefined,
+          },
+          {
+            command: "podman-compose",
             args: ["config", "--services"],
             detached: undefined,
           },
           {
             command: "podman-compose",
             args: ["--verbose", "up", "-d"],
-            detached: undefined,
+            detached: true,
           },
           {
             command: "podman-compose",
@@ -402,7 +616,7 @@ Deno.test({
           {
             command: "podman-compose",
             args: ["--verbose", "down", "--remove-orphans"],
-            detached: undefined,
+            detached: true,
           },
         ],
       );
@@ -428,6 +642,12 @@ Deno.test({
         },
         runProcess: (command) => {
           commands.push(command);
+          if (isComposeResolvedConfigCommand(command)) {
+            return Promise.resolve({
+              code: 0,
+              stdout: "services:\n  web: {}\n",
+            });
+          }
           if (isComposeConfigCommand(command)) {
             return Promise.resolve({ code: 0, stdout: "web\n" });
           }
@@ -438,8 +658,8 @@ Deno.test({
         },
       });
 
-      assertEquals(commands.length, 2);
-      assertEquals(commands[1]?.detachSignal, detachController.signal);
+      assertEquals(commands.length, 3);
+      assertEquals(commands[2]?.detachSignal, detachController.signal);
     });
   },
 });
@@ -530,6 +750,16 @@ function isComposeConfigCommand(command: ProcessCommand): boolean {
     command.command === "podman-compose" &&
     command.args.join(" ") === "config --services"
   );
+}
+
+function isComposeResolvedConfigCommand(command: ProcessCommand): boolean {
+  return command.command === "podman-compose" &&
+    command.args.join(" ") === "config";
+}
+
+function isComposeDownCommand(command: ProcessCommand): boolean {
+  return command.command === "podman-compose" &&
+    command.args.join(" ") === "--verbose down --remove-orphans";
 }
 
 function composeEvent(status: string, service: string): string {

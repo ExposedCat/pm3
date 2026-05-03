@@ -7,7 +7,7 @@ services:
       delayed-health:
         condition: service_healthy
     ports:
-      - "3201:3000"
+      - "3301:3000"
 
   delayed-health:
     image: node:22-alpine
@@ -16,15 +16,21 @@ services:
     volumes:
       - ./delayed-health:/app:ro,Z
     ports:
-      - "3202:3000"
+      - "3302:3000"
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "const fs = require('node:fs'); const path = '/tmp/pm3-healthcheck-count'; const count = fs.existsSync(path) ? Number(fs.readFileSync(path, 'utf8')) + 1 : 1; fs.writeFileSync(path, String(count)); process.exit(count >= 2 ? 1 : 0);",
+          "process.exit(1);",
         ]
       interval: 1s
       timeout: 5s
       retries: 3
+
+x-pm3:
+  startup:
+    mode: watcher
+    required_services:
+      - main

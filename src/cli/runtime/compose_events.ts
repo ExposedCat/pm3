@@ -1,5 +1,9 @@
-export type ProjectComposeHealthStatus = "pending" | "healthy" | "degraded";
-export type ProjectComposeServiceStatus = "pending" | "started" | "stopped";
+export type ProjectComposeHealthStatus = "starting" | "healthy" | "degraded";
+export type ProjectComposeServiceStatus =
+  | "starting"
+  | "started"
+  | "stopping"
+  | "stopped";
 
 export type ProjectComposeHealthChange = {
   project: string;
@@ -52,7 +56,7 @@ export function getComposeHealthStatus(
   const status = event?.health_status ?? parseHealthStatusEvent(event?.Status);
 
   if (status === "starting") {
-    return "pending";
+    return "starting";
   }
 
   if (status === "healthy") {
@@ -80,11 +84,11 @@ export function getComposeServiceStatus(
     status === "init" ||
     status === "restart"
   ) {
-    return "pending";
+    return "starting";
   }
 
   if (status === "stop" || status === "died" || status === "remove") {
-    return "stopped";
+    return "stopping";
   }
 
   return "";

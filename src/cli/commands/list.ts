@@ -128,7 +128,7 @@ function formatProjectState(
 
 function getProjectState(
   containers: readonly Pick<ProjectListContainer, "state">[],
-): "down" | "pending" | "up" {
+): "down" | "starting" | "stopping" | "up" {
   if (containers.length === 0) {
     return "down";
   }
@@ -147,7 +147,11 @@ function getProjectState(
     return "down";
   }
 
-  return "pending";
+  if (states.some((state) => state === "created")) {
+    return "starting";
+  }
+
+  return "stopping";
 }
 
 function getProjectStateDuration(
@@ -155,9 +159,9 @@ function getProjectStateDuration(
     ProjectListContainer,
     "exitedAt" | "startedAt" | "status"
   >[],
-  state: "down" | "pending" | "up",
+  state: "down" | "starting" | "stopping" | "up",
 ): string {
-  if (state === "pending") {
+  if (state === "starting" || state === "stopping") {
     return "";
   }
 
@@ -305,13 +309,13 @@ function formatListCell(cell: {
   const match = cell.value.match(/^(.+?)(\s*)$/);
   const content = match?.[1] ?? cell.value;
   const padding = match?.[2] ?? "";
-  const state = content.match(/^(down|pending|up)(?:\s|$)/)?.[1];
+  const state = content.match(/^(down|starting|stopping|up)(?:\s|$)/)?.[1];
 
   if (state === "down") {
     return `${red(content)}${padding}`;
   }
 
-  if (state === "pending") {
+  if (state === "starting" || state === "stopping") {
     return `${yellow(content)}${padding}`;
   }
 

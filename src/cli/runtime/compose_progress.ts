@@ -4,8 +4,9 @@ import { green, red, yellow } from "../output/color.ts";
 import {
   getComposeEventService,
   getComposeHealthStatus,
-  type PodmanEvent,
+  getComposeServiceStatus,
   parsePodmanEvent,
+  type PodmanEvent,
 } from "./compose_events.ts";
 import { listComposeServices, PODMAN_COMMAND } from "./compose_files.ts";
 
@@ -95,7 +96,7 @@ export async function startComposeProgress(
   const finished = new Set<string>();
   const healthStarted = new Set<string>();
   const healthLines = new Map<string, string>();
-  const healthStatuses = new Map<string, "pending" | "healthy" | "degraded">();
+  const healthStatuses = new Map<string, "starting" | "healthy" | "degraded">();
   const unhealthy = new Set<string>();
   const started = new Set<string>();
   const serviceNames = new Set(services);
@@ -142,6 +143,11 @@ export async function startComposeProgress(
           service,
           output,
         );
+      }
+
+      const serviceStatus = getComposeServiceStatus(event);
+      if (serviceStatus) {
+        progressOptions.onServiceChange?.(service, serviceStatus);
       }
 
       const healthStatus = shouldTrackComposeHealth(operation)
@@ -210,8 +216,8 @@ export async function startComposeProgress(
           );
         }
 
-        const noticeService =
-          getComposeNoticeService(services, line) || lastCommandService;
+        const noticeService = getComposeNoticeService(services, line) ||
+          lastCommandService;
         if (noticeService && isComposeNoticeLine(line)) {
           const parentLine = formatComposeProgressLine(
             project.name,
@@ -238,7 +244,11 @@ export async function startComposeProgress(
 type ComposeProgressOptions = {
   onHealthChange?: (
     service: string,
-    status: "pending" | "healthy" | "degraded",
+    status: "starting" | "healthy" | "degraded",
+  ) => void;
+  onServiceChange?: (
+    service: string,
+    status: "starting" | "started" | "stopping" | "stopped",
   ) => void;
   onUnhealthy?: (service: string) => void;
 };
@@ -353,14 +363,14 @@ function updateComposeHealthProgress(
   parentOperation: string,
   started: Set<string>,
   lines: Map<string, string>,
-  statuses: Map<string, "pending" | "healthy" | "degraded">,
+  statuses: Map<string, "starting" | "healthy" | "degraded">,
   unhealthy: Set<string>,
   service: string,
-  status: "pending" | "healthy" | "degraded",
+  status: "starting" | "healthy" | "degraded",
   output: ComposeOutput,
 ): boolean {
   const previousStatus = statuses.get(service);
-  if (previousStatus && previousStatus !== "pending") {
+  if (previousStatus && previousStatus !== "starting") {
     return false;
   }
 
@@ -379,7 +389,7 @@ function updateComposeHealthProgress(
     lines.set(service, line);
   }
 
-  if (status === "pending") {
+  if (status === "starting") {
     return true;
   }
 
@@ -409,7 +419,7 @@ function formatComposeHealthPendingLine(): string {
 }
 
 function formatComposeHealthFinishedLine(
-  status: "pending" | "healthy" | "degraded",
+  status: "starting" | "healthy" | "degraded",
 ): string {
   if (status === "healthy") {
     return green("Healthy");

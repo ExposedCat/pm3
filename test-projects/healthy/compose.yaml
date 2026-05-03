@@ -1,5 +1,5 @@
 services:
-  built:
+  main:
     build:
       context: ./built
       dockerfile: Containerfile
@@ -39,3 +39,9 @@ services:
       interval: 1s
       timeout: 1s
       retries: 10
+
+x-pm3:
+  startup:
+    mode: watcher
+    required_services:
+      - main

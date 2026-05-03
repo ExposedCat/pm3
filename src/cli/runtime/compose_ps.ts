@@ -72,7 +72,7 @@ function parseComposeContainerServiceStatus(
     return "stopped";
   }
 
-  return "pending";
+  return "starting";
 }
 
 function getComposeContainerService(container: PodmanComposeContainer): string {
@@ -132,7 +132,7 @@ function parseComposeContainerHealthStatus(
     ?.toLowerCase();
 
   if (health === "starting") {
-    return "pending";
+    return "starting";
   }
 
   if (health === "healthy") {

@@ -12,18 +12,18 @@ Deno.test("compose event parses service lifecycle statuses", () => {
   );
   assertEquals(
     getComposeServiceStatus(parsePodmanEvent('{"Status":"create"}')),
-    "pending",
+    "starting",
   );
   assertEquals(
     getComposeServiceStatus(parsePodmanEvent('{"Status":"stop"}')),
-    "stopped",
+    "stopping",
   );
 });
 
 Deno.test("compose event parses health statuses", () => {
   assertEquals(
     getComposeHealthStatus(parsePodmanEvent('{"health_status":"starting"}')),
-    "pending",
+    "starting",
   );
   assertEquals(
     getComposeHealthStatus(

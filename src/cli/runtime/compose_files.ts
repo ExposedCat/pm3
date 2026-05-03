@@ -38,6 +38,11 @@ export type ComposeServiceDiscovery =
   | { kind: "services"; services: string[] }
   | { kind: "error"; message: string };
 
+export type ComposeConfigDiscovery =
+  | { kind: "missing-compose-file" }
+  | { kind: "config"; text: string }
+  | { kind: "error"; message: string };
+
 export async function listComposeServices(
   project: ComposeProject,
   runProcess: (
@@ -58,8 +63,7 @@ export async function listComposeServices(
   if (result.code !== 0) {
     return {
       kind: "error",
-      message:
-        result.stderr?.trim() ||
+      message: result.stderr?.trim() ||
         result.stdout?.trim() ||
         `${PODMAN_COMPOSE_COMMAND} config --services exited with code ${result.code}`,
     };
@@ -71,5 +75,37 @@ export async function listComposeServices(
       .split("\n")
       .map((service) => service.trim())
       .filter(Boolean),
+  };
+}
+
+export async function readComposeConfig(
+  project: ComposeProject,
+  runProcess: (
+    command: ProcessCommand,
+  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
+): Promise<ComposeConfigDiscovery> {
+  if (!(await hasComposeFile(project.workingDir))) {
+    return { kind: "missing-compose-file" };
+  }
+
+  const result = await runProcess({
+    command: PODMAN_COMPOSE_COMMAND,
+    args: ["config"],
+    cwd: project.workingDir,
+    captureOutput: true,
+  });
+
+  if (result.code !== 0) {
+    return {
+      kind: "error",
+      message: result.stderr?.trim() ||
+        result.stdout?.trim() ||
+        `${PODMAN_COMPOSE_COMMAND} config exited with code ${result.code}`,
+    };
+  }
+
+  return {
+    kind: "config",
+    text: result.stdout ?? "",
   };
 }

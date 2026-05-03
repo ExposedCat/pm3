@@ -35,10 +35,18 @@ export type Command = ReturnType<(typeof commandDefinitions)[number]["parse"]>;
 export type RunCommandOptions = {
   databasePath?: string;
   detachSignal?: AbortSignal;
+  launchDetachedLifecycle?: (
+    command: DetachedLifecycleLaunch,
+  ) => Promise<void>;
   runLineStream?: RunLineStream;
   runProcess?: RunProcess;
   signal?: AbortSignal;
   verbose?: boolean;
+};
+
+export type DetachedLifecycleLaunch = {
+  args: readonly string[];
+  env: Record<string, string>;
 };
 
 export type CliCommand<TKind extends string = string> = {

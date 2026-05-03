@@ -8,6 +8,12 @@ import type {
   ProjectComposeHealthStatus,
   ProjectComposeServiceStatus,
 } from "../cli/runtime/compose_events.ts";
+import {
+  type ComposeStartupConfig,
+  type ComposeStartupServiceState,
+  evaluateComposeStartupPolicy,
+  readComposeStartupConfig,
+} from "../cli/runtime/compose_startup.ts";
 import type { PM3Database } from "../database/database.ts";
 import {
   listProjectServiceHealth,
@@ -19,7 +25,7 @@ import {
 } from "../database/project_state.ts";
 import { listProjects } from "../database/projects.ts";
 import { type DaemonMessage, startDaemonIpcServer } from "./daemon_ipc.ts";
-import { startProject } from "./project.ts";
+import { startProject, stopProject } from "./project.ts";
 
 export type DaemonRunOptions = {
   signal?: AbortSignal;
@@ -54,14 +60,30 @@ export async function runDaemon(
       await listProjectServiceStates(db),
     );
     const enabledProjects = startupProjects.filter(isEnabledProject);
+    const { runSystemProcess } = await import("../cli/runtime/process.ts");
+    const runProcess = commandOptions.runProcess ?? runSystemProcess;
+    const watcherConfigs = await loadComposeWatcherConfigs(
+      startupProjects,
+      runProcess,
+    );
     const startupContainers = await snapshotProjectContainers(
       db,
       commandOptions,
-      enabledProjects,
+      startupProjects,
       healthStatuses,
       serviceStatuses,
       { logKnownChanges: true },
     );
+    for (const project of startupProjects) {
+      void enforceComposeWatcherPolicy(
+        commandOptions,
+        lifecycleOperations,
+        healthStatuses,
+        serviceStatuses,
+        project,
+        watcherConfigs.get(project.name),
+      );
+    }
     ipcServer = await startDaemonIpcServer((message) => {
       void handleDaemonMessage(
         db,
@@ -91,6 +113,15 @@ export async function runDaemon(
           daemonProject,
           { healthStatus, service, serviceStatus },
           { logKnownChanges: true },
+        ).then(() =>
+          enforceComposeWatcherPolicy(
+            commandOptions,
+            lifecycleOperations,
+            healthStatuses,
+            serviceStatuses,
+            daemonProject,
+            watcherConfigs.get(daemonProject.name),
+          )
         );
       },
     );
@@ -126,7 +157,7 @@ async function startDownProjects(
 async function snapshotProjectContainers(
   db: PM3Database,
   options: RunCommandOptions,
-  projects: readonly EnabledProject[],
+  projects: readonly DaemonProject[],
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
   snapshotOptions: TrackStatusOptions = {},
@@ -174,6 +205,24 @@ type ServiceStatusSnapshot = {
 
 function isEnabledProject(project: DaemonProject): project is EnabledProject {
   return project.enabled === 1;
+}
+
+async function loadComposeWatcherConfigs(
+  projects: readonly DaemonProject[],
+  runProcess: (
+    command: import("../cli/runtime/process.ts").ProcessCommand,
+  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
+): Promise<Map<string, ComposeStartupConfig>> {
+  const configs = new Map<string, ComposeStartupConfig>();
+
+  for (const project of projects) {
+    const config = await readComposeStartupConfig(project, runProcess);
+    if (config?.policy.mode === "watcher") {
+      configs.set(project.name, config);
+    }
+  }
+
+  return configs;
 }
 
 async function handleDaemonMessage(
@@ -325,6 +374,65 @@ async function markProjectServicesStopped(
   }
 }
 
+async function enforceComposeWatcherPolicy(
+  options: RunCommandOptions,
+  lifecycleOperations: Map<string, DaemonLifecycleOperation>,
+  healthStatuses: Map<string, ProjectComposeHealthStatus>,
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  project: Pick<DaemonProject, "name" | "workingDir">,
+  config: ComposeStartupConfig | undefined,
+): Promise<void> {
+  if (!config || lifecycleOperations.has(project.name)) {
+    return;
+  }
+
+  const reason = evaluateComposeStartupPolicy(
+    config,
+    snapshotComposeStartupState(
+      healthStatuses,
+      serviceStatuses,
+      project,
+      config,
+    ),
+  );
+  if (!reason) {
+    return;
+  }
+
+  lifecycleOperations.set(project.name, "stop");
+  console.log(`${project.name} ${reason}`);
+  try {
+    await stopProject(project, options, { detached: true });
+  } catch (error) {
+    console.error(
+      `Failed to stop ${project.name} after watcher policy triggered: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+function snapshotComposeStartupState(
+  healthStatuses: ReadonlyMap<string, ProjectComposeHealthStatus>,
+  serviceStatuses: ReadonlyMap<string, ProjectComposeServiceStatus>,
+  project: Pick<DaemonProject, "name">,
+  config: ComposeStartupConfig,
+): Map<string, ComposeStartupServiceState> {
+  const state = new Map<string, ComposeStartupServiceState>();
+
+  for (const service of config.services) {
+    const key = formatProjectServiceKey(project.name, service);
+    const serviceStatus = serviceStatuses.get(key) ?? "starting";
+    state.set(service, {
+      everStarted: serviceStatus === "started" || serviceStatus === "stopped",
+      health: healthStatuses.get(key) ?? "",
+      status: serviceStatus,
+    });
+  }
+
+  return state;
+}
+
 function isProjectDown(
   containers: readonly ProjectComposeContainer[],
 ): boolean {
@@ -421,7 +529,11 @@ function combineServiceStatuses(
 }
 
 function rankServiceStatus(status: ProjectComposeServiceStatus | ""): number {
-  if (status === "pending") {
+  if (status === "starting") {
+    return 4;
+  }
+
+  if (status === "stopping") {
     return 3;
   }
 
@@ -451,7 +563,7 @@ function rankHealthStatus(status: ProjectComposeHealthStatus | ""): number {
     return 3;
   }
 
-  if (status === "pending") {
+  if (status === "starting") {
     return 2;
   }
 

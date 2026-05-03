@@ -124,7 +124,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "list prints pending when compose containers have mixed states",
+  name: "list prints stopping when compose containers have mixed states",
   sanitizeResources: false,
   async fn() {
     await withTempCli(async ({ databasePath, root }) => {
@@ -145,7 +145,7 @@ Deno.test({
 
       assertEquals(
         output,
-        ["NAME  STATE", "api   \x1b[33mpending\x1b[0m"].join("\n"),
+        ["NAME  STATE", "api   \x1b[33mstopping\x1b[0m"].join("\n"),
       );
     });
   },
@@ -180,7 +180,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "detailed list omits duration for pending projects",
+  name: "detailed list omits duration for stopping projects",
   sanitizeResources: false,
   async fn() {
     await withTempCli(async ({ databasePath, root }) => {
@@ -213,8 +213,8 @@ Deno.test({
       assertEquals(
         output,
         [
-          "NAME  STATE    STARTUP   CREATED  PORTS",
-          "api   \x1b[33mpending\x1b[0m  \x1b[31mdisabled\x1b[0m  1h",
+          "NAME  STATE     STARTUP   CREATED  PORTS",
+          "api   \x1b[33mstopping\x1b[0m  \x1b[31mdisabled\x1b[0m  1h",
         ].join("\n"),
       );
     });

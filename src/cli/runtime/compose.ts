@@ -17,6 +17,7 @@ import {
   PODMAN_COMMAND,
   PODMAN_COMPOSE_COMMAND,
 } from "./compose_files.ts";
+import { createComposeStartupTracker } from "./compose_startup.ts";
 import {
   type ComposeProgress,
   createEmptyComposeProgress,
@@ -61,20 +62,44 @@ export async function runProjectCompose(
   const operation = getComposeOperation(args);
   const trackHealth = runOptions.trackHealth ?? true;
   const healthAbortController = new AbortController();
+  const startupAbortController = new AbortController();
   const canAbortUnhealthy = trackHealth &&
     isHealthTrackedOperation(operation) &&
     (!options.runProcess || options.runLineStream);
+  const { runSystemProcess } = await import("./process.ts");
+  const runProcess = options.runProcess ?? runSystemProcess;
+  const startupTracker = canAbortUnhealthy
+    ? await createComposeStartupTracker(project, runProcess)
+    : undefined;
   const result = await runComposeCommand(project, operation, args, options, {
     detached: runOptions.detached,
     detachSignal: isHealthTrackedOperation(operation)
       ? options.detachSignal
       : undefined,
-    onHealthChange: runOptions.onHealthChange,
+    onHealthChange: (change) => {
+      runOptions.onHealthChange?.(change);
+      startupTracker?.recordHealth(change.service, change.status);
+      if (startupTracker?.abortReason()) {
+        startupAbortController.abort();
+      }
+    },
+    onServiceChange: startupTracker
+      ? (change) => {
+        startupTracker.recordService(change.service, change.status);
+        if (startupTracker.abortReason()) {
+          startupAbortController.abort();
+        }
+      }
+      : undefined,
     onUnhealthy: canAbortUnhealthy
       ? () => healthAbortController.abort()
       : undefined,
     signal: canAbortUnhealthy
-      ? combineAbortSignals(options.signal, healthAbortController.signal)
+      ? combineAbortSignals(
+        options.signal,
+        healthAbortController.signal,
+        startupAbortController.signal,
+      )
       : options.signal,
     trackHealth,
   });
@@ -84,6 +109,14 @@ export async function runProjectCompose(
   }
 
   if (result.process.code !== 0) {
+    const startupAbortReason = startupTracker?.abortReason() ?? "";
+    if (startupAbortReason) {
+      await stopStartedComposeServices(project, options, {
+        detached: runOptions.detached,
+      });
+      throw inputError(startupAbortReason);
+    }
+
     const unhealthyServices = result.progress.unhealthyServices();
     if (unhealthyServices.length > 0) {
       await stopStartedComposeServices(project, options, {
@@ -101,6 +134,14 @@ export async function runProjectCompose(
     }
 
     throw inputError(formatComposeFailure(result.process));
+  }
+
+  const startupAbortReason = startupTracker?.abortReason() ?? "";
+  if (startupAbortReason) {
+    await stopStartedComposeServices(project, options, {
+      detached: runOptions.detached,
+    });
+    throw inputError(startupAbortReason);
   }
 
   const unhealthyServices = result.progress.unhealthyServices();
@@ -315,6 +356,7 @@ type ComposeCommandRunOptions = {
   detached?: boolean;
   detachSignal?: AbortSignal;
   onHealthChange?: (change: ProjectComposeHealthChange) => void;
+  onServiceChange?: (change: ProjectComposeServiceChange) => void;
   onUnhealthy?: (service: string) => void;
   signal?: AbortSignal;
   trackHealth?: boolean;
@@ -359,6 +401,12 @@ async function runComposeCommand(
               service,
               status,
             }),
+          onServiceChange: (service, status) =>
+            runOptions.onServiceChange?.({
+              project: project.name,
+              service,
+              status,
+            }),
           onUnhealthy: runOptions.onUnhealthy,
         },
       );
@@ -368,6 +416,7 @@ async function runComposeCommand(
       command: PODMAN_COMPOSE_COMMAND,
       args: progress.captureComposeCommands ? ["--verbose", ...args] : args,
       cwd: project.workingDir,
+      detached: runOptions.detached,
     };
     if (runOptions.signal) {
       command.signal = runOptions.signal;
