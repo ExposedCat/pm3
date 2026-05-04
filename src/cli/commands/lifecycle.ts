@@ -1,3 +1,4 @@
+import { basename, fromFileUrl } from "@std/path";
 import type {
   CliCommand,
   CommandDefinition,
@@ -7,7 +8,6 @@ import type {
 import { withNamedProject } from "../commands.ts";
 import { usageError } from "../errors.ts";
 import { requireArgument } from "../utils.ts";
-import { basename, fromFileUrl } from "@std/path";
 
 type LifecycleCommandKind = "start" | "stop" | "restart";
 
@@ -136,15 +136,12 @@ async function runLifecycleCommand(
     }
 
     const { notifyDaemon } = await import("../../runtime/daemon_ipc.ts");
-    const {
-      listProjectContainers,
-      restartProject,
-      startProject,
-      stopProject,
-    } = await import("../../runtime/project.ts");
-    const stopState = command.kind === "stop"
-      ? await snapshotProjectState(project, options, listProjectContainers)
-      : [];
+    const { listProjectContainers, restartProject, startProject, stopProject } =
+      await import("../../runtime/project.ts");
+    const stopState =
+      command.kind === "stop"
+        ? await snapshotProjectState(project, options, listProjectContainers)
+        : [];
     await notifyDaemon({
       type: "lifecycle.begin",
       projectId: project.id,
@@ -174,16 +171,22 @@ async function runLifecycleCommand(
         projectId: project.id,
         project: project.name,
         operation: command.kind,
-        health: command.kind === "stop" ? [] : await snapshotProjectHealth(
-          project,
-          options,
-          listProjectContainers,
-        ),
-        state: command.kind === "stop" ? stopState : await snapshotProjectState(
-          project,
-          options,
-          listProjectContainers,
-        ),
+        health:
+          command.kind === "stop"
+            ? []
+            : await snapshotProjectHealth(
+                project,
+                options,
+                listProjectContainers,
+              ),
+        state:
+          command.kind === "stop"
+            ? stopState
+            : await snapshotProjectState(
+                project,
+                options,
+                listProjectContainers,
+              ),
       });
     } catch (error) {
       await notifyDaemon({
@@ -243,9 +246,10 @@ function createDetachedLifecycleEnv(
     : {};
 }
 
-function createDetachedLifecycleInvocation(
-  commandArgs: readonly string[],
-): { command: string; args: string[] } {
+function createDetachedLifecycleInvocation(commandArgs: readonly string[]): {
+  command: string;
+  args: string[];
+} {
   const execPath = Deno.execPath();
   if (basename(execPath) !== "deno") {
     return {
@@ -282,14 +286,13 @@ type ProjectHealthSnapshot = {
 async function snapshotProjectHealth(
   project: ProjectRuntime,
   options: RunCommandOptions,
-  listContainers:
-    typeof import("../../runtime/project.ts").listProjectContainers,
+  listContainers: typeof import("../../runtime/project.ts").listProjectContainers,
 ): Promise<ProjectHealthSnapshot[]> {
   const containers = await listContainers(project, options);
   return containers.flatMap((container) =>
     container.service && container.healthStatus
       ? [{ service: container.service, status: container.healthStatus }]
-      : []
+      : [],
   );
 }
 
@@ -301,8 +304,7 @@ type ProjectStateSnapshot = {
 async function snapshotProjectState(
   project: ProjectRuntime,
   options: RunCommandOptions,
-  listContainers:
-    typeof import("../../runtime/project.ts").listProjectContainers,
+  listContainers: typeof import("../../runtime/project.ts").listProjectContainers,
 ): Promise<ProjectStateSnapshot[]> {
   const containers = await listContainers(project, options);
   const states = new Map<string, ProjectStateSnapshot["status"]>();

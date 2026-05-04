@@ -1,3 +1,5 @@
+import type { PM3Database } from "../database/database.ts";
+import type { Project } from "../database/projects.ts";
 import { createCommand } from "./commands/create.ts";
 import { daemonCommand } from "./commands/daemon.ts";
 import { disableCommand } from "./commands/disable.ts";
@@ -13,8 +15,6 @@ import { removeCommand } from "./commands/remove.ts";
 import { viewCommand } from "./commands/view.ts";
 import { inputError, usageError } from "./errors.ts";
 import type { RunLineStream, RunProcess } from "./runtime/process.ts";
-import type { PM3Database } from "../database/database.ts";
-import type { Project } from "../database/projects.ts";
 
 export const commandDefinitions = [
   createCommand,
@@ -35,9 +35,7 @@ export type Command = ReturnType<(typeof commandDefinitions)[number]["parse"]>;
 export type RunCommandOptions = {
   databasePath?: string;
   detachSignal?: AbortSignal;
-  launchDetachedLifecycle?: (
-    command: DetachedLifecycleLaunch,
-  ) => Promise<void>;
+  launchDetachedLifecycle?: (command: DetachedLifecycleLaunch) => Promise<void>;
   runLineStream?: RunLineStream;
   runProcess?: RunProcess;
   signal?: AbortSignal;
@@ -76,7 +74,7 @@ export function parseArgs(args: string[]): ParsedCommand {
   }
 
   const definition = commandDefinitions.find((command) =>
-    command.names.includes(commandName)
+    command.names.includes(commandName),
   );
   if (!definition) {
     throw usageError(`Unknown command: ${commandName}`);

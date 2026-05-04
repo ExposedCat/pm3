@@ -4,15 +4,14 @@
     "build": "deno compile --allow-read --allow-write --allow-env --allow-net --allow-run=deno,pm3,podman-compose,podman --output dist/pm3 src/cli/main.ts",
     "cli": "deno run --allow-read --allow-write --allow-env --allow-net --allow-run=deno,pm3,podman-compose,podman src/cli/main.ts",
     "check": "deno run --allow-read --allow-run scripts/check.ts",
-    "format": "biome lint --write; biome format --write",
-    "test": "deno test --allow-read --allow-write --allow-env --allow-run=deno",
-    "test:watch": "deno test --allow-read --allow-write --allow-env --watch",
+    "format": "deno run -A @biomejs/biome check --write src/",
     "release:detect-version": "deno run --allow-read --allow-write --allow-env --allow-run=git scripts/detect-version-change.ts",
     "release:build-rpm": "deno run --allow-read --allow-write --allow-env --allow-run=tar,rpmbuild scripts/build-rpm.ts",
     "release:assets": "deno run --allow-read --allow-write --allow-env scripts/prepare-release-assets.ts",
     "release:create": "deno run --allow-env --allow-run=gh --allow-read --allow-net scripts/create-release.ts"
   },
   "imports": {
+    "@biomejs/biome": "npm:@biomejs/biome@^2.4.14",
     "@soapbox/kysely-deno-sqlite": "jsr:@soapbox/kysely-deno-sqlite@^2.2.0",
     "@std/assert": "jsr:@std/assert@^1.0.15",
     "@std/path": "jsr:@std/path@^1.1.4",

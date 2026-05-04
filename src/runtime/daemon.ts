@@ -38,7 +38,8 @@ export async function runDaemon(
   daemonOptions: DaemonRunOptions = {},
 ): Promise<void> {
   console.log("Starting PM3 Daemon...");
-  const signal = daemonOptions.signal ??
+  const signal =
+    daemonOptions.signal ??
     commandOptions.signal ??
     new AbortController().signal;
   const healthStatuses = new Map<string, ProjectComposeHealthStatus>();
@@ -121,7 +122,7 @@ export async function runDaemon(
             serviceStatuses,
             daemonProject,
             watcherConfigs.get(daemonProject.name),
-          )
+          ),
         );
       },
     );
@@ -243,11 +244,10 @@ async function handleDaemonMessage(
   }
 
   if (message.operation === "stop") {
-    await markProjectServicesStopped(
-      db,
-      serviceStatuses,
-      { id: message.projectId, name: message.project },
-    );
+    await markProjectServicesStopped(db, serviceStatuses, {
+      id: message.projectId,
+      name: message.project,
+    });
     lifecycleOperations.set(message.project, message.operation);
     return;
   }
@@ -363,14 +363,9 @@ async function markProjectServicesStopped(
   }
 
   for (const service of services) {
-    await trackServiceStatus(
-      db,
-      serviceStatuses,
-      project,
-      service,
-      "stopped",
-      { logKnownChanges: true },
-    );
+    await trackServiceStatus(db, serviceStatuses, project, service, "stopped", {
+      logKnownChanges: true,
+    });
   }
 }
 
@@ -441,7 +436,7 @@ function isProjectDown(
   }
 
   return containers.every((container) =>
-    ["created", "exited", "stopped"].includes(container.state.toLowerCase())
+    ["created", "exited", "stopped"].includes(container.state.toLowerCase()),
   );
 }
 
@@ -525,7 +520,7 @@ function combineServiceStatuses(
   const currentRank = rankServiceStatus(current);
   const nextRank = rankServiceStatus(next);
 
-  return nextRank > currentRank ? next : (current || next);
+  return nextRank > currentRank ? next : current || next;
 }
 
 function rankServiceStatus(status: ProjectComposeServiceStatus | ""): number {
@@ -555,7 +550,7 @@ function combineHealthStatuses(
   const currentRank = rankHealthStatus(current);
   const nextRank = rankHealthStatus(next);
 
-  return nextRank > currentRank ? next : (current || next);
+  return nextRank > currentRank ? next : current || next;
 }
 
 function rankHealthStatus(status: ProjectComposeHealthStatus | ""): number {

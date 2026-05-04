@@ -1,10 +1,10 @@
 import { parse as parseYaml } from "@std/yaml";
 import { inputError } from "../errors.ts";
+import type { ProjectComposeHealthStatus } from "./compose_events.ts";
 import {
   type ComposeConfigDiscovery,
   readComposeConfig,
 } from "./compose_files.ts";
-import type { ProjectComposeHealthStatus } from "./compose_events.ts";
 import type { ProcessCommand } from "./process.ts";
 
 type ComposeProject = {
@@ -69,9 +69,10 @@ export async function createComposeStartupTracker(
     return undefined;
   }
   const state = new Map<string, ComposeStartupServiceState>(
-    config.services.map((
+    config.services.map((service) => [
       service,
-    ) => [service, createComposeStartupServiceState()]),
+      createComposeStartupServiceState(),
+    ]),
   );
 
   return {
@@ -171,23 +172,23 @@ function parseComposeStartupPolicy(
   const extension = getRecord(config["x-pm3"]);
   const startup = getRecord(extension.startup);
   const mode = startup.mode === "watcher" ? "watcher" : "startup";
-  const stopWhenUnstartable = startup.stop_when_unstartable === "all"
-    ? "all"
-    : "";
+  const stopWhenUnstartable =
+    startup.stop_when_unstartable === "all" ? "all" : "";
   const requiredServices = Array.isArray(startup.required_services)
-    ? startup.required_services.filter((service): service is string =>
-      typeof service === "string" && service.length > 0
-    )
+    ? startup.required_services.filter(
+        (service): service is string =>
+          typeof service === "string" && service.length > 0,
+      )
     : [];
 
-  const unknownRequired = requiredServices.filter((service) =>
-    !services.includes(service)
+  const unknownRequired = requiredServices.filter(
+    (service) => !services.includes(service),
   );
   if (unknownRequired.length > 0) {
     throw inputError(
-      `Unknown x-pm3.startup.required_services entries: ${
-        unknownRequired.join(", ")
-      }`,
+      `Unknown x-pm3.startup.required_services entries: ${unknownRequired.join(
+        ", ",
+      )}`,
     );
   }
 
@@ -204,25 +205,25 @@ export function evaluateComposeStartupPolicy(
 ): string {
   const classifications = classifyComposeStartup(config, state);
   const requiredBlocked = config.policy.requiredServices.filter((service) =>
-    isTerminalClassification(classifications.get(service) ?? "waiting")
+    isTerminalClassification(classifications.get(service) ?? "waiting"),
   );
   if (requiredBlocked.length > 0) {
-    return `Required services permanently unstartable: ${
-      requiredBlocked.join(", ")
-    }`;
+    return `Required services permanently unstartable: ${requiredBlocked.join(
+      ", ",
+    )}`;
   }
 
   if (config.policy.stopWhenUnstartable !== "all") {
     return "";
   }
 
-  const remaining = config.services.filter((service) =>
-    (classifications.get(service) ?? "waiting") !== "started"
+  const remaining = config.services.filter(
+    (service) => (classifications.get(service) ?? "waiting") !== "started",
   );
   if (
     remaining.length > 0 &&
     remaining.every((service) =>
-      isTerminalClassification(classifications.get(service) ?? "waiting")
+      isTerminalClassification(classifications.get(service) ?? "waiting"),
     )
   ) {
     return `Startup permanently blocked: ${remaining.join(", ")}`;
@@ -239,7 +240,7 @@ function parseComposeServiceDependencies(
     return dependsOn.flatMap((dependency) =>
       typeof dependency === "string" && dependency.length > 0
         ? [{ service: dependency, condition: "service_started" as const }]
-        : []
+        : [],
     );
   }
 
@@ -326,7 +327,7 @@ function classifyComposeStartupService(
       service,
       dependency,
       chain,
-    )
+    ),
   );
   chain.delete(service);
 
@@ -371,15 +372,17 @@ function isComposeDependencyTerminal(
 
   if (dependency.condition === "service_started") {
     return (
-      dependencyState?.status === "stopping" ||
-      dependencyState?.status === "stopped"
-    ) &&
-      !state.get(consumer)?.everStarted;
+      (dependencyState?.status === "stopping" ||
+        dependencyState?.status === "stopped") &&
+      !state.get(consumer)?.everStarted
+    );
   }
 
-  return dependencyState?.health === "degraded" ||
+  return (
+    dependencyState?.health === "degraded" ||
     dependencyState?.status === "stopping" ||
-    dependencyState?.status === "stopped";
+    dependencyState?.status === "stopped"
+  );
 }
 
 function isTerminalClassification(

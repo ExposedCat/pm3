@@ -6,18 +6,17 @@ import {
   getComposeEventWorkingDir,
   getComposeHealthStatus,
   getComposeServiceStatus,
-  parsePodmanEvent,
   type ProjectComposeHealthChange,
   type ProjectComposeHealthStatus,
   type ProjectComposeServiceChange,
   type ProjectComposeServiceStatus,
+  parsePodmanEvent,
 } from "./compose_events.ts";
 import {
   hasComposeFile,
   PODMAN_COMMAND,
   PODMAN_COMPOSE_COMMAND,
 } from "./compose_files.ts";
-import { createComposeStartupTracker } from "./compose_startup.ts";
 import {
   type ComposeProgress,
   createEmptyComposeProgress,
@@ -25,9 +24,10 @@ import {
   startComposeProgress,
 } from "./compose_progress.ts";
 import {
-  parseComposeContainerJson,
   type ProjectComposeContainer,
+  parseComposeContainerJson,
 } from "./compose_ps.ts";
+import { createComposeStartupTracker } from "./compose_startup.ts";
 import type { ProcessCommand, ProcessResult } from "./process.ts";
 
 export type {
@@ -62,7 +62,8 @@ export async function runProjectCompose(
   const operation = getComposeOperation(args);
   const trackHealth = runOptions.trackHealth ?? true;
   const startupAbortController = new AbortController();
-  const canAbortUnhealthy = trackHealth &&
+  const canAbortUnhealthy =
+    trackHealth &&
     isHealthTrackedOperation(operation) &&
     (!options.runProcess || options.runLineStream);
   const { runSystemProcess } = await import("./process.ts");
@@ -88,21 +89,21 @@ export async function runProjectCompose(
     },
     onServiceChange: startupTracker
       ? (change) => {
-        startupTracker.recordService(change.service, change.status);
-        if (startupTracker.abortReason()) {
-          startupAbortController.abort();
+          startupTracker.recordService(change.service, change.status);
+          if (startupTracker.abortReason()) {
+            startupAbortController.abort();
+          }
         }
-      }
       : undefined,
     onUnhealthy: canAbortUnhealthy
       ? () => healthAbortController?.abort()
       : undefined,
     signal: canAbortUnhealthy
       ? combineAbortSignals(
-        options.signal,
-        healthAbortController?.signal,
-        startupAbortController.signal,
-      )
+          options.signal,
+          healthAbortController?.signal,
+          startupAbortController.signal,
+        )
       : options.signal,
     trackHealth,
   });
@@ -345,11 +346,9 @@ function formatUnhealthyServices(
   projectName: string,
   services: readonly string[],
 ): string {
-  return `Unhealthy services: ${
-    services
-      .map((service) => `${projectName}/${service}`)
-      .join(", ")
-  }`;
+  return `Unhealthy services: ${services
+    .map((service) => `${projectName}/${service}`)
+    .join(", ")}`;
 }
 
 function countWarnings(result: { stdout?: string; stderr?: string }): number {
@@ -385,12 +384,14 @@ async function runComposeCommand(
   const loader = startLoader(`${operation} ${project.name}`, {
     enabled: !options.verbose && !runOptions.detached,
   });
-  const output = runOptions.detached ? createSilentComposeOutput() : {
-    finishLine: loader.finishLine,
-    startLineAfter: loader.startLineAfter,
-    startLine: loader.startLine,
-    writeLineAfter: loader.writeLineAfter,
-  };
+  const output = runOptions.detached
+    ? createSilentComposeOutput()
+    : {
+        finishLine: loader.finishLine,
+        startLineAfter: loader.startLineAfter,
+        startLine: loader.startLine,
+        writeLineAfter: loader.writeLineAfter,
+      };
   let progress = createEmptyComposeProgress();
 
   try {
@@ -420,9 +421,7 @@ async function runComposeCommand(
 
     const command: ProcessCommand = {
       command: PODMAN_COMPOSE_COMMAND,
-      args: progress.captureComposeCommands
-        ? ["--verbose", ...args]
-        : args,
+      args: progress.captureComposeCommands ? ["--verbose", ...args] : args,
       cwd: project.workingDir,
       detached: runOptions.detached,
     };

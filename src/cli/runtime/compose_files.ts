@@ -63,7 +63,8 @@ export async function listComposeServices(
   if (result.code !== 0) {
     return {
       kind: "error",
-      message: result.stderr?.trim() ||
+      message:
+        result.stderr?.trim() ||
         result.stdout?.trim() ||
         `${PODMAN_COMPOSE_COMMAND} config --services exited with code ${result.code}`,
     };
@@ -98,7 +99,8 @@ export async function readComposeConfig(
   if (result.code !== 0) {
     return {
       kind: "error",
-      message: result.stderr?.trim() ||
+      message:
+        result.stderr?.trim() ||
         result.stdout?.trim() ||
         `${PODMAN_COMPOSE_COMMAND} config exited with code ${result.code}`,
     };

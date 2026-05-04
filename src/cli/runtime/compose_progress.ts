@@ -5,8 +5,8 @@ import {
   getComposeEventService,
   getComposeHealthStatus,
   getComposeServiceStatus,
-  parsePodmanEvent,
   type PodmanEvent,
+  parsePodmanEvent,
 } from "./compose_events.ts";
 import { listComposeServices, PODMAN_COMMAND } from "./compose_files.ts";
 
@@ -216,8 +216,8 @@ export async function startComposeProgress(
           );
         }
 
-        const noticeService = getComposeNoticeService(services, line) ||
-          lastCommandService;
+        const noticeService =
+          getComposeNoticeService(services, line) || lastCommandService;
         if (noticeService && isComposeNoticeLine(line)) {
           const parentLine = formatComposeProgressLine(
             project.name,

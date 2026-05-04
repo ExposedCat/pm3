@@ -35,8 +35,8 @@ export function parsePodmanEvent(line: string): PodmanEvent | undefined {
 export function getComposeEventService(event: PodmanEvent | undefined): string {
   return (
     event?.Attributes?.["io.podman.compose.service"] ??
-      event?.Attributes?.["com.docker.compose.service"] ??
-      ""
+    event?.Attributes?.["com.docker.compose.service"] ??
+    ""
   );
 }
 
@@ -45,8 +45,8 @@ export function getComposeEventWorkingDir(
 ): string {
   return (
     event?.Attributes?.["io.podman.compose.project.working_dir"] ??
-      event?.Attributes?.["com.docker.compose.project.working_dir"] ??
-      ""
+    event?.Attributes?.["com.docker.compose.project.working_dir"] ??
+    ""
   );
 }
 
@@ -79,11 +79,7 @@ export function getComposeServiceStatus(
     return "started";
   }
 
-  if (
-    status === "create" ||
-    status === "init" ||
-    status === "restart"
-  ) {
+  if (status === "create" || status === "init" || status === "restart") {
     return "starting";
   }
 

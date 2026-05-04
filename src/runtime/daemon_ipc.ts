@@ -21,25 +21,25 @@ export type DaemonLifecycleState = {
 
 export type DaemonMessage =
   | {
-    type: "lifecycle.begin";
-    projectId: number;
-    project: string;
-    operation: DaemonLifecycleOperation;
-  }
+      type: "lifecycle.begin";
+      projectId: number;
+      project: string;
+      operation: DaemonLifecycleOperation;
+    }
   | {
-    type: "lifecycle.end";
-    projectId: number;
-    project: string;
-    operation: DaemonLifecycleOperation;
-    health: DaemonLifecycleHealth[];
-    state: DaemonLifecycleState[];
-  }
+      type: "lifecycle.end";
+      projectId: number;
+      project: string;
+      operation: DaemonLifecycleOperation;
+      health: DaemonLifecycleHealth[];
+      state: DaemonLifecycleState[];
+    }
   | {
-    type: "lifecycle.abort";
-    projectId: number;
-    project: string;
-    operation: DaemonLifecycleOperation;
-  };
+      type: "lifecycle.abort";
+      projectId: number;
+      project: string;
+      operation: DaemonLifecycleOperation;
+    };
 
 export async function startDaemonIpcServer(
   onMessage: (message: DaemonMessage) => void,
@@ -79,7 +79,7 @@ export async function notifyDaemon(message: DaemonMessage): Promise<void> {
 function resolveDaemonSocketPath(): string {
   return (
     Deno.env.get(DAEMON_SOCKET_ENV) ??
-      join(Deno.env.get(XDG_RUNTIME_DIR_ENV) ?? "/tmp", "pm3", "daemon.sock")
+    join(Deno.env.get(XDG_RUNTIME_DIR_ENV) ?? "/tmp", "pm3", "daemon.sock")
   );
 }
 
