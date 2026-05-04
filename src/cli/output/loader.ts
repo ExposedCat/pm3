@@ -5,6 +5,7 @@ export type Loader = {
   startLine(line: string): void;
   startLineAfter(parentLine: string, line: string): void;
   stop(): void;
+  writeLine(line: string): void;
   writeLineAfter(parentLine: string, line: string): void;
 };
 
@@ -23,6 +24,7 @@ export function startLoader(
         console.log(`    ${line}...`);
       },
       stop: () => {},
+      writeLine: (line) => console.log(line),
       writeLineAfter: (_parentLine, line) => console.log(`    ${line}`),
     };
   }
@@ -106,6 +108,18 @@ export function startLoader(
       for (const line of lines) {
         line.active = false;
       }
+      render();
+    },
+    writeLine(lineLabel: string) {
+      if (lines.some((line) => line.label === lineLabel)) {
+        return;
+      }
+
+      lines.push({
+        active: false,
+        indent: "",
+        label: lineLabel,
+      });
       render();
     },
     writeLineAfter(parentLine: string, lineLabel: string) {

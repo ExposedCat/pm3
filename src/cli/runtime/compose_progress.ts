@@ -11,6 +11,7 @@ import {
 import { listComposeServices, PODMAN_COMMAND } from "./compose_files.ts";
 
 const EVENT_STREAM_STOP_GRACE_MS = 150;
+const HEALTH_SETTLE_TIMEOUT_MS = 30_000;
 
 type ComposeProject = {
   name: string;
@@ -98,6 +99,24 @@ export async function startComposeProgress(
   const healthLines = new Map<string, string>();
   const healthStatuses = new Map<string, "starting" | "healthy" | "degraded">();
   const unhealthy = new Set<string>();
+  let pendingHealthSettlement:
+    | { promise: Promise<void>; resolve: () => void }
+    | undefined;
+  const refreshSettledHealthPromise = () => {
+    if (![...healthStatuses.values()].some((status) => status === "starting")) {
+      pendingHealthSettlement?.resolve();
+      pendingHealthSettlement = undefined;
+      return;
+    }
+
+    if (!pendingHealthSettlement) {
+      let resolveSettlement = () => {};
+      const promise = new Promise<void>((resolve) => {
+        resolveSettlement = resolve;
+      });
+      pendingHealthSettlement = { promise, resolve: resolveSettlement };
+    }
+  };
   const started = new Set<string>();
   const serviceNames = new Set(services);
   for (const service of services) {
@@ -176,6 +195,8 @@ export async function startComposeProgress(
         return;
       }
 
+      refreshSettledHealthPromise();
+
       progressOptions.onHealthChange?.(service, healthStatus);
       if (healthStatus === "degraded") {
         progressOptions.onUnhealthy?.(service);
@@ -191,6 +212,12 @@ export async function startComposeProgress(
     unhealthyServices: () => [...unhealthy],
     shownNoticeCount: () => shownNoticeCount,
     async stop() {
+      if (shouldTrackComposeHealth(operation)) {
+        await Promise.race([
+          pendingHealthSettlement?.promise ?? Promise.resolve(),
+          delay(HEALTH_SETTLE_TIMEOUT_MS),
+        ]);
+      }
       await delay(EVENT_STREAM_STOP_GRACE_MS);
       await stream.stop();
     },
@@ -216,9 +243,14 @@ export async function startComposeProgress(
           );
         }
 
+        if (!isComposeNoticeLine(line)) {
+          continue;
+        }
+
+        const formattedNotice = formatComposeNoticeLine(line);
         const noticeService =
           getComposeNoticeService(services, line) || lastCommandService;
-        if (noticeService && isComposeNoticeLine(line)) {
+        if (noticeService) {
           const parentLine = formatComposeProgressLine(
             project.name,
             finished.has(noticeService)
@@ -233,9 +265,12 @@ export async function startComposeProgress(
             noticeService,
             output,
           );
-          output.writeLineAfter(parentLine, formatComposeNoticeLine(line));
-          shownNoticeCount += 1;
+          output.writeLineAfter(parentLine, formattedNotice);
+        } else {
+          output.writeLine(formattedNotice);
         }
+
+        shownNoticeCount += 1;
       }
     },
   };
@@ -509,6 +544,7 @@ type ComposeOutput = {
   finishLine(line: string, finishedLine: string): void;
   startLineAfter(parentLine: string, line: string): void;
   startLine(line: string): void;
+  writeLine(line: string): void;
   writeLineAfter(parentLine: string, line: string): void;
 };
 

@@ -396,7 +396,10 @@ async function collectTargetLogs(
     throw inputError(formatComposeFailure(result));
   }
 
-  return splitOutputLines(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+  return sliceLogLinesFromEnd(
+    splitOutputLines(`${result.stdout ?? ""}\n${result.stderr ?? ""}`),
+    logsOptions.lines,
+  );
 }
 
 function createRawLogRenderer(
@@ -517,8 +520,9 @@ function fitColumnText(value: string, width: number): string {
   return `${truncateVisibleText(normalized, width - 3)}...`;
 }
 
-const ANSI_ESCAPE_PATTERN = new RegExp("\\u001b\\[[0-9;]*m", "g");
-const ANSI_ESCAPE_PREFIX_PATTERN = new RegExp("^\\u001b\\[[0-9;]*m");
+const ANSI_ESCAPE = String.fromCharCode(27);
+const ANSI_ESCAPE_PATTERN = new RegExp(`${ANSI_ESCAPE}\\[[0-9;]*m`, "g");
+const ANSI_ESCAPE_PREFIX_PATTERN = new RegExp(`^${ANSI_ESCAPE}\\[[0-9;]*m`);
 
 function getVisibleTextLength(value: string): number {
   return value.replaceAll(ANSI_ESCAPE_PATTERN, "").length;
@@ -560,6 +564,17 @@ function splitOutputLines(output: string): string[] {
     .split("\n")
     .map((line) => line.replaceAll("\r", ""))
     .filter((line) => line.length > 0);
+}
+
+function sliceLogLinesFromEnd(
+  lines: readonly string[],
+  count: number | undefined,
+): string[] {
+  if (count === undefined || lines.length <= count) {
+    return [...lines];
+  }
+
+  return [...lines.slice(-count)];
 }
 
 async function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
@@ -869,6 +884,7 @@ function createSilentComposeOutput() {
     finishLine: () => {},
     startLineAfter: () => {},
     startLine: () => {},
+    writeLine: () => {},
     writeLineAfter: () => {},
   };
 }
@@ -972,6 +988,7 @@ async function runComposeCommand(
         finishLine: loader.finishLine,
         startLineAfter: loader.startLineAfter,
         startLine: loader.startLine,
+        writeLine: loader.writeLine,
         writeLineAfter: loader.writeLineAfter,
       };
   let progress = createEmptyComposeProgress();
