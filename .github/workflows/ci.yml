@@ -44,34 +44,32 @@ jobs:
           deno-version: v2.x
 
       - name: Detect pending release
-        id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: deno task release:detect-pending
+        id: package
+        run: ./scripts/detect-pending-release.sh "${{ github.event.before }}" "${{ github.sha }}"
 
       - name: Install RPM tooling
-        if: steps.version.outputs.changed == 'true'
+        if: steps.package.outputs.changed == 'true'
         run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Build binary
-        if: steps.version.outputs.changed == 'true'
+        if: steps.package.outputs.changed == 'true'
         run: deno task build
 
       - name: Build RPM
-        if: steps.version.outputs.changed == 'true'
+        if: steps.package.outputs.changed == 'true'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.package.outputs.version }}
         run: deno task release:build-rpm
 
       - name: Prepare release assets
-        if: steps.version.outputs.changed == 'true'
+        if: steps.package.outputs.changed == 'true'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.package.outputs.version }}
         run: deno task release:assets
 
       - name: Create GitHub release
-        if: steps.version.outputs.changed == 'true'
+        if: steps.package.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.package.outputs.version }}
         run: deno task release:create

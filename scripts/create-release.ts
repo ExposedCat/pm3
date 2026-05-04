@@ -9,7 +9,7 @@ await run("gh", [
   "--title",
   `pm3 v${version}`,
   "--notes",
-  `Release generated from deno.json version ${version}.`,
+  `Release generated from tito version ${version}.`,
 ]);
 
 function requireEnv(name: string): string {
