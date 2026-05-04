@@ -1,6 +1,6 @@
 Name:           pm3
-Version:        1.1.2
-Release:        2
+Version:        2.0.0
+Release:        1
 Summary:        Container project manager
 
 License:        GPL-3.0-only
@@ -51,6 +51,10 @@ install -Dm0644 %{SOURCE2} %{buildroot}%{_userunitdir}/pm3.service
 %{_userunitdir}/pm3.service
 
 %changelog
+* Mon May 04 2026 Artem Prokop <artem13.prokop@gmail.com> 2.0.0-1
+- feat: proper healthcheck handling
+- feat: service state and health hooks
+
 * Mon Apr 27 2026 Artem Prokop <artem13.prokop@gmail.com> 1.1.1-2
 - feat: copr build badge (artem13.prokop@gmail.com)
 
