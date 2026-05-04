@@ -29,9 +29,9 @@ policy and hooks keep working after boot.
 
 - `podman`
 - `podman-compose`
-- a compose file in the project directory:
-  `podman-compose.yaml`, `podman-compose.yml`, `compose.yaml`, `compose.yml`,
-  `docker-compose.yaml`, or `docker-compose.yml`
+- a compose file in the project directory: `podman-compose.yaml`,
+  `podman-compose.yml`, `compose.yaml`, `compose.yml`, `docker-compose.yaml`, or
+  `docker-compose.yml`
 
 ## Quick Start
 
@@ -43,13 +43,7 @@ pm3 list --detailed
 
 ## Docs
 
-Full docs are kept in [`wiki/`](./wiki) using GitHub Wiki page names:
-
-- [`Home`](./wiki/Home.md)
-- [`Getting Started`](./wiki/Getting-Started.md)
-- [`Command Reference`](./wiki/Command-Reference.md)
-- [`Examples`](./wiki/Examples.md)
-- [`x-pm3 Spec`](./wiki/X-PM3-Spec.md)
+See [`Wiki`](https://github.com/ExposedCat/pm3/wiki) for full docs.
 
 ## Common Commands
 
