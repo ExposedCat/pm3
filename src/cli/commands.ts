@@ -11,6 +11,7 @@ import {
   stopCommand,
 } from "./commands/lifecycle.ts";
 import { listCommand } from "./commands/list.ts";
+import { logsCommand } from "./commands/logs.ts";
 import { removeCommand } from "./commands/remove.ts";
 import { viewCommand } from "./commands/view.ts";
 import { inputError, usageError } from "./errors.ts";
@@ -23,6 +24,7 @@ export const commandDefinitions = [
   startCommand,
   stopCommand,
   restartCommand,
+  logsCommand,
   listCommand,
   viewCommand,
   removeCommand,

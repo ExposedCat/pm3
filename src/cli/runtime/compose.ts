@@ -1,5 +1,6 @@
 import type { RunCommandOptions } from "../commands.ts";
 import { inputError } from "../errors.ts";
+import { blue, cyan, green, magenta, red, yellow } from "../output/color.ts";
 import { startLoader } from "../output/loader.ts";
 import {
   getComposeEventService,
@@ -182,11 +183,592 @@ export async function removeProjectComposeArtifacts(
   );
 }
 
+export async function streamProjectComposeLogs(
+  project: ComposeProject,
+  logsOptions: ProjectComposeLogsOptions,
+  options: RunCommandOptions,
+): Promise<void> {
+  const serviceTargets = await resolveProjectLogTargets(
+    project,
+    logsOptions,
+    options,
+  );
+  if (serviceTargets.length === 0) {
+    throw inputError(
+      `No compose containers found for project: ${project.name}`,
+    );
+  }
+  const targetColors = createTargetColors(serviceTargets);
+
+  if (logsOptions.once) {
+    await printProjectLogsOnce(
+      project,
+      serviceTargets,
+      logsOptions,
+      options,
+      targetColors,
+    );
+    return;
+  }
+
+  await followProjectLogs(project, serviceTargets, logsOptions, options);
+}
+
 export type ProjectComposeRunOptions = {
   detached?: boolean;
   onHealthChange?: (change: ProjectComposeHealthChange) => void;
   trackHealth?: boolean;
 };
+
+export type ProjectComposeLogsOptions = {
+  services: readonly string[];
+  since: string | undefined;
+  lines: number | undefined;
+  raw: boolean;
+  once: boolean;
+};
+
+type ComposeLogTarget = {
+  service: string;
+  containerIds: string[];
+};
+
+type ComposeLogQueryOptions = ProjectComposeLogsOptions & {
+  until?: string;
+};
+
+type ComposeLogRenderer = {
+  write(service: string, line: string): void;
+  finish(): Promise<void>;
+};
+
+async function resolveProjectLogTargets(
+  project: ComposeProject,
+  logsOptions: ProjectComposeLogsOptions,
+  options: RunCommandOptions,
+): Promise<ComposeLogTarget[]> {
+  if (!(await hasComposeFile(project.workingDir))) {
+    throw inputError(`Compose file not found for project: ${project.name}`);
+  }
+
+  const containers = await listProjectComposeContainers(project, options);
+  const containersByService = new Map<string, string[]>();
+
+  for (const container of containers) {
+    if (!container.service || !container.id) {
+      continue;
+    }
+
+    const serviceContainers = containersByService.get(container.service) ?? [];
+    serviceContainers.push(container.id);
+    containersByService.set(container.service, serviceContainers);
+  }
+
+  const targetServices =
+    logsOptions.services.length > 0
+      ? logsOptions.services
+      : [...containersByService.keys()];
+
+  const missingServices = targetServices.filter(
+    (service) => (containersByService.get(service) ?? []).length === 0,
+  );
+  if (missingServices.length > 0) {
+    throw inputError(
+      `No compose containers found for service: ${missingServices[0]}`,
+    );
+  }
+
+  return targetServices.map((service) => ({
+    service,
+    containerIds: containersByService.get(service) ?? [],
+  }));
+}
+
+async function printProjectLogsOnce(
+  project: ComposeProject,
+  targets: readonly ComposeLogTarget[],
+  logsOptions: ComposeLogQueryOptions,
+  options: RunCommandOptions,
+  targetColors: ReadonlyMap<string, (value: string) => string>,
+): Promise<void> {
+  const linesByService = new Map<string, string[]>();
+
+  await Promise.all(
+    targets.map(async (target) => {
+      linesByService.set(
+        target.service,
+        await collectTargetLogs(project, target, logsOptions, options),
+      );
+    }),
+  );
+
+  if (logsOptions.raw) {
+    for (const target of targets) {
+      const lines = linesByService.get(target.service) ?? [];
+      for (const line of lines) {
+        printRawLogLine(targets, targetColors, target.service, line);
+      }
+    }
+    return;
+  }
+
+  printColumnHeader(targets, targetColors);
+  const maxLines = Math.max(
+    0,
+    ...targets.map(
+      (target) => (linesByService.get(target.service) ?? []).length,
+    ),
+  );
+  for (let index = 0; index < maxLines; index += 1) {
+    printColumnRow(
+      targets,
+      targets.map(
+        (target) => (linesByService.get(target.service) ?? [])[index] ?? "",
+      ),
+    );
+  }
+}
+
+async function followProjectLogs(
+  project: ComposeProject,
+  targets: readonly ComposeLogTarget[],
+  logsOptions: ProjectComposeLogsOptions,
+  options: RunCommandOptions,
+): Promise<void> {
+  const checkpoint = shouldPreloadLogHistory(logsOptions)
+    ? new Date().toISOString()
+    : undefined;
+  const targetColors = createTargetColors(targets);
+
+  if (checkpoint) {
+    await printProjectLogsOnce(
+      project,
+      targets,
+      createHistoricalLogsOptions(logsOptions, checkpoint),
+      options,
+      targetColors,
+    );
+  }
+
+  const renderer = logsOptions.raw
+    ? createRawLogRenderer(targets, targetColors)
+    : createColumnLogRenderer(targets, targetColors, {
+        printHeader: !checkpoint,
+      });
+  const followLogOptions = checkpoint
+    ? createFollowLogsOptions(logsOptions, checkpoint)
+    : logsOptions;
+
+  const streams = targets.map((target) =>
+    runLogStream(project, target, followLogOptions, options, (line) =>
+      renderer.write(target.service, line),
+    ),
+  );
+
+  try {
+    await Promise.race([
+      Promise.all(streams.map((stream) => stream.done)),
+      waitForAbort(options.signal),
+    ]);
+  } finally {
+    await Promise.all(streams.map((stream) => stream.stop()));
+    await renderer.finish();
+  }
+}
+
+async function collectTargetLogs(
+  project: ComposeProject,
+  target: ComposeLogTarget,
+  logsOptions: ComposeLogQueryOptions,
+  options: RunCommandOptions,
+): Promise<string[]> {
+  const { runSystemProcess } = await import("./process.ts");
+  const runProcess = options.runProcess ?? runSystemProcess;
+  const result = await runProcess({
+    command: PODMAN_COMMAND,
+    args: createPodmanLogsArgs(target, logsOptions, { follow: false }),
+    cwd: project.workingDir,
+    captureOutput: true,
+    signal: options.signal,
+  });
+
+  if (result.code !== 0 && !options.signal?.aborted) {
+    throw inputError(formatComposeFailure(result));
+  }
+
+  return splitOutputLines(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+}
+
+function createRawLogRenderer(
+  targets: readonly ComposeLogTarget[],
+  targetColors: ReadonlyMap<string, (value: string) => string>,
+): ComposeLogRenderer {
+  const showPrefix = targets.length > 1;
+  let output = Promise.resolve();
+
+  return {
+    write(service, line) {
+      output = output.then(() => {
+        printRawLogLine(targets, targetColors, service, line, showPrefix);
+      });
+    },
+    finish() {
+      return output;
+    },
+  };
+}
+
+function createColumnLogRenderer(
+  targets: readonly ComposeLogTarget[],
+  targetColors: ReadonlyMap<string, (value: string) => string>,
+  renderOptions: { printHeader?: boolean } = {},
+): ComposeLogRenderer {
+  if (renderOptions.printHeader ?? true) {
+    printColumnHeader(targets, targetColors);
+  }
+  let output = Promise.resolve();
+
+  return {
+    write(service, line) {
+      output = output.then(() => {
+        printColumnRow(
+          targets,
+          targets.map((target) => (target.service === service ? line : "")),
+        );
+      });
+    },
+    finish() {
+      return output;
+    },
+  };
+}
+
+function printRawLogLine(
+  targets: readonly ComposeLogTarget[],
+  targetColors: ReadonlyMap<string, (value: string) => string>,
+  service: string,
+  line: string,
+  showPrefix = targets.length > 1,
+): void {
+  const colorize = targetColors.get(service) ?? ((value: string) => value);
+  console.log(showPrefix ? `${colorize(service)} | ${line}` : colorize(line));
+}
+
+function printColumnHeader(
+  targets: readonly ComposeLogTarget[],
+  targetColors: ReadonlyMap<string, (value: string) => string>,
+): void {
+  printColumnRow(
+    targets,
+    targets.map((target) =>
+      (targetColors.get(target.service) ?? ((value: string) => value))(
+        target.service,
+      ),
+    ),
+  );
+  printColumnRow(
+    targets,
+    targets.map(() => ""),
+  );
+}
+
+function printColumnRow(
+  targets: readonly ComposeLogTarget[],
+  values: readonly string[],
+): void {
+  const widths = getLogColumnWidths(targets.length);
+  const cells = values.map((value, index) =>
+    fitColumnText(value, widths[index]),
+  );
+  console.log(cells.join(" | "));
+}
+
+function getLogColumnWidths(columnCount: number): number[] {
+  const totalWidth = getConsoleWidth();
+  const separatorWidth = Math.max(0, (columnCount - 1) * 3);
+  const baseWidth = Math.max(
+    12,
+    Math.floor((totalWidth - separatorWidth) / Math.max(1, columnCount)),
+  );
+
+  return Array.from({ length: columnCount }, () => baseWidth);
+}
+
+function getConsoleWidth(): number {
+  try {
+    return Deno.consoleSize().columns;
+  } catch {
+    return 120;
+  }
+}
+
+function fitColumnText(value: string, width: number): string {
+  const normalized = value.replaceAll("\t", " ").replaceAll("\r", "");
+  const visibleLength = getVisibleTextLength(normalized);
+
+  if (visibleLength <= width) {
+    return `${normalized}${" ".repeat(width - visibleLength)}`;
+  }
+
+  if (width <= 3) {
+    return truncateVisibleText(normalized, width);
+  }
+
+  return `${truncateVisibleText(normalized, width - 3)}...`;
+}
+
+const ANSI_ESCAPE_PATTERN = new RegExp("\\u001b\\[[0-9;]*m", "g");
+const ANSI_ESCAPE_PREFIX_PATTERN = new RegExp("^\\u001b\\[[0-9;]*m");
+
+function getVisibleTextLength(value: string): number {
+  return value.replaceAll(ANSI_ESCAPE_PATTERN, "").length;
+}
+
+function truncateVisibleText(value: string, width: number): string {
+  if (width <= 0) {
+    return "";
+  }
+
+  let output = "";
+  let visibleLength = 0;
+  let index = 0;
+  let usedAnsi = false;
+
+  while (index < value.length && visibleLength < width) {
+    const sequence = value.slice(index).match(ANSI_ESCAPE_PREFIX_PATTERN);
+    if (sequence) {
+      output += sequence[0];
+      index += sequence[0].length;
+      usedAnsi = true;
+      continue;
+    }
+
+    output += value[index];
+    index += 1;
+    visibleLength += 1;
+  }
+
+  if (usedAnsi && !output.endsWith("\x1b[0m")) {
+    output += "\x1b[0m";
+  }
+
+  return output;
+}
+
+function splitOutputLines(output: string): string[] {
+  return output
+    .split("\n")
+    .map((line) => line.replaceAll("\r", ""))
+    .filter((line) => line.length > 0);
+}
+
+async function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) {
+    return await new Promise(() => {});
+  }
+
+  if (signal.aborted) {
+    return;
+  }
+
+  await new Promise<void>((resolve) =>
+    signal.addEventListener("abort", () => resolve(), { once: true }),
+  );
+}
+
+type LogStream = {
+  done: Promise<void>;
+  stop(): Promise<void>;
+};
+
+function runLogStream(
+  project: ComposeProject,
+  target: ComposeLogTarget,
+  logsOptions: ProjectComposeLogsOptions,
+  options: RunCommandOptions,
+  onLine: (line: string) => void,
+): LogStream {
+  const process = new Deno.Command(PODMAN_COMMAND, {
+    args: createPodmanLogsArgs(target, logsOptions, { follow: true }),
+    cwd: project.workingDir,
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const child = process.spawn();
+  let exited = false;
+  const stop = async () => {
+    if (!exited) {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // The process may already be gone.
+      }
+    }
+
+    await Promise.allSettled([status, stdoutDone, stderrDone]);
+  };
+  const abort = () => {
+    void stop();
+  };
+  options.signal?.addEventListener("abort", abort, { once: true });
+
+  const status = child.status.then((result) => {
+    exited = true;
+    if (result.code !== 0 && !options.signal?.aborted) {
+      throw inputError(
+        `${PODMAN_COMMAND} logs exited with code ${result.code}`,
+      );
+    }
+  });
+  const stdoutDone = readLogLines(child.stdout, onLine);
+  const stderrDone = readLogLines(child.stderr, onLine);
+  const done = Promise.all([status, stdoutDone, stderrDone])
+    .then(() => {})
+    .finally(() => {
+      options.signal?.removeEventListener("abort", abort);
+    });
+
+  return {
+    done,
+    async stop() {
+      await stop();
+    },
+  };
+}
+
+function createPodmanLogsArgs(
+  target: ComposeLogTarget,
+  logsOptions: ComposeLogQueryOptions,
+  mode: { follow: boolean },
+): string[] {
+  const args = ["logs"];
+  const since = getLogsSinceArgument(logsOptions);
+
+  if (mode.follow) {
+    args.push("--follow");
+  }
+
+  if (since) {
+    args.push("--since", since);
+  }
+
+  if (logsOptions.until) {
+    args.push("--until", logsOptions.until);
+  }
+
+  if (logsOptions.lines !== undefined) {
+    args.push("--tail", String(logsOptions.lines));
+  }
+
+  if (target.containerIds.length > 1) {
+    args.push("--names");
+  }
+
+  args.push(...target.containerIds);
+  return args;
+}
+
+function getLogsSinceArgument(
+  logsOptions: ComposeLogQueryOptions,
+): string | undefined {
+  if (logsOptions.since === "start") {
+    return undefined;
+  }
+
+  if (logsOptions.since) {
+    return logsOptions.since;
+  }
+
+  if (logsOptions.lines !== undefined) {
+    return undefined;
+  }
+
+  return new Date().toISOString();
+}
+
+function shouldPreloadLogHistory(
+  logsOptions: ProjectComposeLogsOptions,
+): boolean {
+  return logsOptions.lines !== undefined || logsOptions.since !== undefined;
+}
+
+function createHistoricalLogsOptions(
+  logsOptions: ProjectComposeLogsOptions,
+  until: string,
+): ComposeLogQueryOptions {
+  return {
+    ...logsOptions,
+    once: true,
+    until,
+  };
+}
+
+function createFollowLogsOptions(
+  logsOptions: ProjectComposeLogsOptions,
+  since: string,
+): ComposeLogQueryOptions {
+  return {
+    ...logsOptions,
+    since,
+    lines: undefined,
+  };
+}
+
+function createTargetColors(
+  targets: readonly ComposeLogTarget[],
+): ReadonlyMap<string, (value: string) => string> {
+  const palette = [cyan, green, yellow, blue, magenta, red];
+
+  return new Map(
+    targets.map((target, index) => [
+      target.service,
+      palette[index % palette.length] ?? ((value: string) => value),
+    ]),
+  );
+}
+
+async function readLogLines(
+  stream: ReadableStream<Uint8Array>,
+  onLine: (line: string) => void,
+): Promise<void> {
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) {
+        break;
+      }
+
+      buffer += decoder.decode(result.value, { stream: true });
+      buffer = flushBufferedLines(buffer, onLine);
+    }
+
+    buffer += decoder.decode();
+    if (buffer) {
+      onLine(buffer.replaceAll("\r", ""));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function flushBufferedLines(
+  buffer: string,
+  onLine: (line: string) => void,
+): string {
+  const lines = buffer.split("\n");
+  const remainder = lines.pop() ?? "";
+
+  for (const line of lines) {
+    onLine(line.replaceAll("\r", ""));
+  }
+
+  return remainder;
+}
 
 export async function listProjectComposeContainers(
   project: ComposeProject,

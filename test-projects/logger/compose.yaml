@@ -1,0 +1,30 @@
+services:
+  red:
+    image: docker.io/library/bash:5.2
+    command:
+      - -lc
+      - |
+        while true; do
+          printf '\033[31m%s\033[0m\n' "$(date -Is)"
+          sleep 1
+        done
+
+  blue:
+    image: docker.io/library/bash:5.2
+    command:
+      - -lc
+      - |
+        while true; do
+          printf '\033[34m%s\033[0m\n' "$(date -Is)"
+          sleep 2
+        done
+
+  green:
+    image: docker.io/library/bash:5.2
+    command:
+      - -lc
+      - |
+        while true; do
+          printf '\033[32m%s\033[0m\n' "$(date -Is)"
+          sleep 3
+        done

@@ -6,6 +6,7 @@ import {
   removeProjectComposeArtifacts,
   runProjectCompose,
   STOP_COMPOSE_ARGS,
+  streamProjectComposeLogs,
 } from "../cli/runtime/compose.ts";
 
 type ProjectRuntime = {
@@ -88,6 +89,22 @@ export async function removeProjectArtifacts(
 ): Promise<void> {
   await removeProjectComposeArtifacts(project, options);
 }
+
+export async function streamProjectLogs(
+  project: ProjectRuntime,
+  logsOptions: ProjectLogsOptions,
+  options: RunCommandOptions,
+): Promise<void> {
+  await streamProjectComposeLogs(project, logsOptions, options);
+}
+
+export type ProjectLogsOptions = {
+  services: readonly string[];
+  since: string | undefined;
+  lines: number | undefined;
+  raw: boolean;
+  once: boolean;
+};
 
 type ProjectBuildOptions = {
   detached?: boolean;
