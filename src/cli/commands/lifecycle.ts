@@ -266,7 +266,7 @@ function createDetachedLifecycleInvocation(commandArgs: readonly string[]): {
       "--allow-write",
       "--allow-env",
       "--allow-net",
-      "--allow-run=deno,pm3,podman-compose,podman",
+      "--allow-run",
       fromFileUrl(new URL("../main.ts", import.meta.url)),
       ...commandArgs,
     ],

@@ -13,7 +13,7 @@ services:
 
   prebuilt:
     image: node:22-alpine
-    command: ["node", "/app/prebuilt.js"]
+    command: [ "node", "/app/prebuilt.js" ]
     working_dir: /app
     volumes:
       - ./prebuilt:/app:ro,Z
@@ -22,25 +22,24 @@ services:
 
   delayed-health:
     image: node:22-alpine
-    command: ["node", "/app/delayed-health.js"]
+    command: [ "node", "/app/delayed-health.js" ]
     working_dir: /app
     volumes:
       - ./delayed-health:/app:ro,Z
     ports:
       - "3103:3000"
     healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "const fs = require('node:fs'); const readyAt = Number(fs.readFileSync('/tmp/pm3-ready-at', 'utf8')); process.exit(Date.now() >= readyAt ? 0 : 1);",
-        ]
+      test: [ "CMD", "node", "-e", "const fs = require('node:fs'); const readyAt = Number(fs.readFileSync('/tmp/pm3-ready-at', 'utf8')); process.exit(Date.now() >= readyAt ? 0 : 1);" ]
       interval: 1s
       timeout: 1s
       retries: 10
 
 x-pm3:
+  hooks:
+    all:
+      started: ../hooks/zenity-state.sh
+    main:
+      stopping: ../hooks/zenity-state.sh
   startup:
     mode: watcher
     required_services:

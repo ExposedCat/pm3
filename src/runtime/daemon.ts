@@ -9,6 +9,12 @@ import type {
   ProjectComposeServiceStatus,
 } from "../cli/runtime/compose_events.ts";
 import {
+  type ComposeHookEvent,
+  type ComposeHooksConfig,
+  readComposeHooksConfig,
+  resolveComposeHookCommand,
+} from "../cli/runtime/compose_hooks.ts";
+import {
   type ComposeStartupConfig,
   type ComposeStartupServiceState,
   evaluateComposeStartupPolicy,
@@ -42,6 +48,7 @@ export async function runDaemon(
     daemonOptions.signal ??
     commandOptions.signal ??
     new AbortController().signal;
+  const hookErrors = new Set<string>();
   const healthStatuses = new Map<string, ProjectComposeHealthStatus>();
   const serviceStatuses = new Map<string, ProjectComposeServiceStatus>();
   const lifecycleOperations = new Map<string, DaemonLifecycleOperation>();
@@ -63,6 +70,11 @@ export async function runDaemon(
     const enabledProjects = startupProjects.filter(isEnabledProject);
     const { runSystemProcess } = await import("../cli/runtime/process.ts");
     const runProcess = commandOptions.runProcess ?? runSystemProcess;
+    const runHook = createComposeHookRunner(runProcess, hookErrors);
+    const hookConfigs = await loadComposeHookConfigs(
+      startupProjects,
+      runProcess,
+    );
     const watcherConfigs = await loadComposeWatcherConfigs(
       startupProjects,
       runProcess,
@@ -82,6 +94,8 @@ export async function runDaemon(
         lifecycleOperations,
         healthStatuses,
         serviceStatuses,
+        hookConfigs,
+        runHook,
         project,
         watcherConfigs.get(project.name),
       );
@@ -89,9 +103,12 @@ export async function runDaemon(
     ipcServer = await startDaemonIpcServer((message) => {
       void handleDaemonMessage(
         db,
+        startupProjects,
         lifecycleOperations,
         healthStatuses,
         serviceStatuses,
+        hookConfigs,
+        runHook,
         message,
       );
     });
@@ -116,7 +133,7 @@ export async function runDaemon(
             daemonProject,
             service,
             normalizeLifecycleServiceStatus(lifecycleOperation, serviceStatus),
-            { logKnownChanges: true },
+            { hookConfigs, logKnownChanges: true, runHook },
           );
           return;
         }
@@ -127,7 +144,7 @@ export async function runDaemon(
           serviceStatuses,
           daemonProject,
           { healthStatus, service, serviceStatus },
-          { logKnownChanges: true },
+          { hookConfigs, logKnownChanges: true, runHook },
         ).then(() =>
           enforceComposeWatcherPolicy(
             db,
@@ -135,6 +152,8 @@ export async function runDaemon(
             lifecycleOperations,
             healthStatuses,
             serviceStatuses,
+            hookConfigs,
+            runHook,
             daemonProject,
             watcherConfigs.get(daemonProject.name),
           ),
@@ -202,7 +221,9 @@ type DaemonProject = Awaited<ReturnType<typeof listProjects>>[number];
 type EnabledProject = DaemonProject & { enabled: 1 };
 
 type TrackStatusOptions = {
+  hookConfigs?: ReadonlyMap<string, ComposeHooksConfig>;
   logKnownChanges?: boolean;
+  runHook?: ComposeHookRunner;
 };
 
 type DaemonLifecycleOperation = "restart" | "start" | "stop";
@@ -241,26 +262,53 @@ async function loadComposeWatcherConfigs(
   return configs;
 }
 
+async function loadComposeHookConfigs(
+  projects: readonly DaemonProject[],
+  runProcess: (
+    command: import("../cli/runtime/process.ts").ProcessCommand,
+  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
+): Promise<Map<string, ComposeHooksConfig>> {
+  const configs = new Map<string, ComposeHooksConfig>();
+
+  for (const project of projects) {
+    const config = await readComposeHooksConfig(project, runProcess);
+    configs.set(project.name, config);
+  }
+
+  return configs;
+}
+
 async function handleDaemonMessage(
   db: PM3Database,
+  projects: readonly DaemonProject[],
   lifecycleOperations: Map<string, DaemonLifecycleOperation>,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  hookConfigs: ReadonlyMap<string, ComposeHooksConfig>,
+  runHook: ComposeHookRunner,
   message: DaemonMessage,
 ): Promise<void> {
+  const project = findDaemonProject(projects, message.project);
+  if (!project) {
+    return;
+  }
+
   if (message.type === "lifecycle.begin") {
     lifecycleOperations.set(message.project, message.operation);
     if (message.operation === "start") {
-      await markProjectServicesStarting(db, serviceStatuses, {
-        id: message.projectId,
-        name: message.project,
+      await markProjectServicesStarting(db, serviceStatuses, project, {
+        hookConfigs,
+        logKnownChanges: true,
+        runHook,
       });
     } else if (
-      message.operation === "stop" || message.operation === "restart"
+      message.operation === "stop" ||
+      message.operation === "restart"
     ) {
-      await markProjectServicesStopping(db, serviceStatuses, {
-        id: message.projectId,
-        name: message.project,
+      await markProjectServicesStopping(db, serviceStatuses, project, {
+        hookConfigs,
+        logKnownChanges: true,
+        runHook,
       });
     }
     return;
@@ -272,9 +320,10 @@ async function handleDaemonMessage(
   }
 
   if (message.operation === "stop") {
-    await markProjectServicesStopped(db, serviceStatuses, {
-      id: message.projectId,
-      name: message.project,
+    await markProjectServicesStopped(db, serviceStatuses, project, {
+      hookConfigs,
+      logKnownChanges: true,
+      runHook,
     });
     lifecycleOperations.set(message.project, message.operation);
     return;
@@ -285,20 +334,20 @@ async function handleDaemonMessage(
     await trackHealthStatus(
       db,
       healthStatuses,
-      { id: message.projectId, name: message.project },
+      project,
       health.service,
       health.status,
-      { logKnownChanges: true },
+      { hookConfigs, logKnownChanges: true, runHook },
     );
   }
   for (const state of message.state) {
     await trackServiceStatus(
       db,
       serviceStatuses,
-      { id: message.projectId, name: message.project },
+      project,
       state.service,
       state.status,
-      { logKnownChanges: true },
+      { hookConfigs, logKnownChanges: true, runHook },
     );
   }
 }
@@ -307,7 +356,7 @@ async function trackComposeServiceStatuses(
   db: PM3Database,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
-  project: Pick<DaemonProject, "id" | "name">,
+  project: Pick<DaemonProject, "id" | "name" | "workingDir">,
   status: ServiceStatusSnapshot,
   options: TrackStatusOptions,
 ): Promise<void> {
@@ -337,7 +386,7 @@ async function trackComposeServiceStatuses(
 async function trackHealthStatus(
   db: PM3Database,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
-  project: Pick<DaemonProject, "id" | "name">,
+  project: Pick<DaemonProject, "id" | "name" | "workingDir">,
   service: string,
   status: ProjectComposeHealthStatus,
   options: TrackStatusOptions,
@@ -353,12 +402,20 @@ async function trackHealthStatus(
   if (options.logKnownChanges && previousStatus !== status) {
     console.log(`${project.name}/${service} ${status}`);
   }
+  if (previousStatus !== status) {
+    await options.runHook?.(
+      options.hookConfigs?.get(project.name),
+      project,
+      service,
+      status,
+    );
+  }
 }
 
 async function trackServiceStatus(
   db: PM3Database,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
-  project: Pick<DaemonProject, "id" | "name">,
+  project: Pick<DaemonProject, "id" | "name" | "workingDir">,
   service: string,
   status: ProjectComposeServiceStatus,
   options: TrackStatusOptions,
@@ -374,42 +431,73 @@ async function trackServiceStatus(
   if (options.logKnownChanges && previousStatus !== status) {
     console.log(`${project.name}/${service} ${status}`);
   }
+  if (previousStatus !== status) {
+    await options.runHook?.(
+      options.hookConfigs?.get(project.name),
+      project,
+      service,
+      status,
+    );
+  }
 }
 
 async function markProjectServicesStopped(
   db: PM3Database,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
-  project: Pick<DaemonProject, "id" | "name">,
+  project: Pick<DaemonProject, "id" | "name" | "workingDir">,
+  options: TrackStatusOptions,
 ): Promise<void> {
-  await markProjectServicesStatus(db, serviceStatuses, project, "stopped");
+  await markProjectServicesStatus(
+    db,
+    serviceStatuses,
+    project,
+    "stopped",
+    options,
+  );
 }
 
 async function markProjectServicesStarting(
   db: PM3Database,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
-  project: Pick<DaemonProject, "id" | "name">,
+  project: Pick<DaemonProject, "id" | "name" | "workingDir">,
+  options: TrackStatusOptions,
 ): Promise<void> {
-  await markProjectServicesStatus(db, serviceStatuses, project, "starting");
+  await markProjectServicesStatus(
+    db,
+    serviceStatuses,
+    project,
+    "starting",
+    options,
+  );
 }
 
 async function markProjectServicesStopping(
   db: PM3Database,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
-  project: Pick<DaemonProject, "id" | "name">,
+  project: Pick<DaemonProject, "id" | "name" | "workingDir">,
+  options: TrackStatusOptions,
 ): Promise<void> {
-  await markProjectServicesStatus(db, serviceStatuses, project, "stopping");
+  await markProjectServicesStatus(
+    db,
+    serviceStatuses,
+    project,
+    "stopping",
+    options,
+  );
 }
 
 async function markProjectServicesStatus(
   db: PM3Database,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
-  project: Pick<DaemonProject, "id" | "name">,
+  project: Pick<DaemonProject, "id" | "name" | "workingDir">,
   status: ProjectComposeServiceStatus,
+  options: TrackStatusOptions,
 ): Promise<void> {
   const services = listKnownProjectServices(serviceStatuses, project.name);
 
   for (const service of services) {
     await trackServiceStatus(db, serviceStatuses, project, service, status, {
+      ...options,
       logKnownChanges: true,
     });
   }
@@ -421,6 +509,8 @@ async function enforceComposeWatcherPolicy(
   lifecycleOperations: Map<string, DaemonLifecycleOperation>,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  hookConfigs: ReadonlyMap<string, ComposeHooksConfig>,
+  runHook: ComposeHookRunner,
   project: Pick<DaemonProject, "id" | "name" | "workingDir">,
   config: ComposeStartupConfig | undefined,
 ): Promise<void> {
@@ -442,7 +532,11 @@ async function enforceComposeWatcherPolicy(
   }
 
   lifecycleOperations.set(project.name, "stop");
-  await markProjectServicesStopping(db, serviceStatuses, project);
+  await markProjectServicesStopping(db, serviceStatuses, project, {
+    hookConfigs,
+    logKnownChanges: true,
+    runHook,
+  });
   try {
     await stopProject(project, options, { detached: true });
   } catch (error) {
@@ -519,6 +613,67 @@ function listKnownProjectServices(
   }
 
   return [...services];
+}
+
+type ComposeHookRunner = (
+  hooks: ComposeHooksConfig | undefined,
+  project: Pick<DaemonProject, "name" | "workingDir">,
+  service: string,
+  event: ComposeHookEvent,
+) => Promise<void>;
+
+function createComposeHookRunner(
+  runProcess: (
+    command: import("../cli/runtime/process.ts").ProcessCommand,
+  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
+  hookErrors: Set<string>,
+): ComposeHookRunner {
+  return async (hooks, project, service, event) => {
+    const command = resolveComposeHookCommand(hooks, service, event);
+    if (!command) {
+      return;
+    }
+
+    const args = [project.name, service, event]
+      .map(quoteShellArgument)
+      .join(" ");
+    const result = await runProcess({
+      command: "sh",
+      args: ["-lc", `${command} ${args}`],
+      captureOutput: true,
+      cwd: project.workingDir,
+    });
+    if (result.code === 0) {
+      hookErrors.delete(formatHookErrorKey(project.name, service, event));
+      return;
+    }
+
+    const errorKey = formatHookErrorKey(project.name, service, event);
+    const message =
+      result.stderr?.trim() ||
+      result.stdout?.trim() ||
+      `hook exited with code ${result.code}`;
+    if (hookErrors.has(errorKey)) {
+      return;
+    }
+
+    hookErrors.add(errorKey);
+    console.error(
+      `Hook failed for ${project.name}/${service} ${event}: ${message}`,
+    );
+  };
+}
+
+function formatHookErrorKey(
+  project: string,
+  service: string,
+  event: ComposeHookEvent,
+): string {
+  return `${project}/${service}/${event}`;
+}
+
+function quoteShellArgument(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 function seedPersistedHealthStatuses(

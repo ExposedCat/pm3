@@ -24,6 +24,14 @@ services:
       retries: 3
 
 x-pm3:
+  hooks:
+    all:
+      degraded: ../hooks/zenity-state.sh
+      healthy: ../hooks/zenity-state.sh
+      started: ../hooks/zenity-state.sh
+      starting: ../hooks/zenity-state.sh
+      stopped: ../hooks/zenity-state.sh
+      stopping: ../hooks/zenity-state.sh
   startup:
     mode: watcher
     required_services:
