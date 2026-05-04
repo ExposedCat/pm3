@@ -77,6 +77,7 @@ export async function runDaemon(
     );
     for (const project of startupProjects) {
       void enforceComposeWatcherPolicy(
+        db,
         commandOptions,
         lifecycleOperations,
         healthStatuses,
@@ -98,12 +99,25 @@ export async function runDaemon(
       () => startupProjects,
       commandOptions,
       ({ healthStatus, project, service, serviceStatus }) => {
-        if (lifecycleOperations.has(project)) {
+        const daemonProject = findDaemonProject(startupProjects, project);
+        if (!daemonProject) {
           return;
         }
 
-        const daemonProject = findDaemonProject(startupProjects, project);
-        if (!daemonProject) {
+        const lifecycleOperation = lifecycleOperations.get(project);
+        if (lifecycleOperation) {
+          if (!serviceStatus) {
+            return;
+          }
+
+          void trackServiceStatus(
+            db,
+            serviceStatuses,
+            daemonProject,
+            service,
+            normalizeLifecycleServiceStatus(lifecycleOperation, serviceStatus),
+            { logKnownChanges: true },
+          );
           return;
         }
 
@@ -116,6 +130,7 @@ export async function runDaemon(
           { logKnownChanges: true },
         ).then(() =>
           enforceComposeWatcherPolicy(
+            db,
             commandOptions,
             lifecycleOperations,
             healthStatuses,
@@ -235,6 +250,19 @@ async function handleDaemonMessage(
 ): Promise<void> {
   if (message.type === "lifecycle.begin") {
     lifecycleOperations.set(message.project, message.operation);
+    if (message.operation === "start") {
+      await markProjectServicesStarting(db, serviceStatuses, {
+        id: message.projectId,
+        name: message.project,
+      });
+    } else if (
+      message.operation === "stop" || message.operation === "restart"
+    ) {
+      await markProjectServicesStopping(db, serviceStatuses, {
+        id: message.projectId,
+        name: message.project,
+      });
+    }
     return;
   }
 
@@ -353,28 +381,47 @@ async function markProjectServicesStopped(
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
   project: Pick<DaemonProject, "id" | "name">,
 ): Promise<void> {
-  const services = new Set<string>();
+  await markProjectServicesStatus(db, serviceStatuses, project, "stopped");
+}
 
-  for (const key of serviceStatuses.keys()) {
-    const [projectName, service] = key.split("/", 2);
-    if (projectName === project.name && service) {
-      services.add(service);
-    }
-  }
+async function markProjectServicesStarting(
+  db: PM3Database,
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  project: Pick<DaemonProject, "id" | "name">,
+): Promise<void> {
+  await markProjectServicesStatus(db, serviceStatuses, project, "starting");
+}
+
+async function markProjectServicesStopping(
+  db: PM3Database,
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  project: Pick<DaemonProject, "id" | "name">,
+): Promise<void> {
+  await markProjectServicesStatus(db, serviceStatuses, project, "stopping");
+}
+
+async function markProjectServicesStatus(
+  db: PM3Database,
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>,
+  project: Pick<DaemonProject, "id" | "name">,
+  status: ProjectComposeServiceStatus,
+): Promise<void> {
+  const services = listKnownProjectServices(serviceStatuses, project.name);
 
   for (const service of services) {
-    await trackServiceStatus(db, serviceStatuses, project, service, "stopped", {
+    await trackServiceStatus(db, serviceStatuses, project, service, status, {
       logKnownChanges: true,
     });
   }
 }
 
 async function enforceComposeWatcherPolicy(
+  db: PM3Database,
   options: RunCommandOptions,
   lifecycleOperations: Map<string, DaemonLifecycleOperation>,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
-  project: Pick<DaemonProject, "name" | "workingDir">,
+  project: Pick<DaemonProject, "id" | "name" | "workingDir">,
   config: ComposeStartupConfig | undefined,
 ): Promise<void> {
   if (!config || lifecycleOperations.has(project.name)) {
@@ -395,7 +442,7 @@ async function enforceComposeWatcherPolicy(
   }
 
   lifecycleOperations.set(project.name, "stop");
-  console.log(`${project.name} ${reason}`);
+  await markProjectServicesStopping(db, serviceStatuses, project);
   try {
     await stopProject(project, options, { detached: true });
   } catch (error) {
@@ -442,6 +489,36 @@ function isProjectDown(
 
 function formatProjectServiceKey(project: string, service: string): string {
   return `${project}/${service}`;
+}
+
+function normalizeLifecycleServiceStatus(
+  operation: DaemonLifecycleOperation,
+  status: ProjectComposeServiceStatus,
+): ProjectComposeServiceStatus {
+  if (
+    (operation === "stop" || operation === "restart") &&
+    status === "stopping"
+  ) {
+    return "stopped";
+  }
+
+  return status;
+}
+
+function listKnownProjectServices(
+  serviceStatuses: ReadonlyMap<string, ProjectComposeServiceStatus>,
+  projectName: string,
+): string[] {
+  const services = new Set<string>();
+
+  for (const key of serviceStatuses.keys()) {
+    const [candidateProjectName, service] = key.split("/", 2);
+    if (candidateProjectName === projectName && service) {
+      services.add(service);
+    }
+  }
+
+  return [...services];
 }
 
 function seedPersistedHealthStatuses(
