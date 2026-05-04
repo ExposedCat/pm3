@@ -7,7 +7,7 @@ export const daemonCommand = {
   names: ["daemon"],
   args: [],
   options: [],
-  description: "Run daemon for enabled projects",
+  description: "Run autostart daemon",
   parse: parseDaemonArgs,
 } satisfies CommandDefinition<DaemonCommand>;
 

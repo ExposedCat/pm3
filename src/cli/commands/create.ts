@@ -16,7 +16,7 @@ export const createCommand = {
   names: ["create"],
   args: ["WORKDIR"],
   options: ["[--name NAME]"],
-  description: "Register project for supervision",
+  description: "Register project",
   parse: parseCreateArgs,
 } satisfies CommandDefinition<CreateCommand>;
 
