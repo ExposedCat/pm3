@@ -43,9 +43,11 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Detect version change
+      - name: Detect pending release
         id: version
-        run: deno task release:detect-version "${{ github.event.before }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: deno task release:detect-pending
 
       - name: Install RPM tooling
         if: steps.version.outputs.changed == 'true'
