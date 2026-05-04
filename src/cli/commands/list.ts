@@ -170,7 +170,7 @@ function getProjectStateDuration(
     .map((container) =>
       state === "up" ? container.startedAt : container.exitedAt
     )
-    .filter(Boolean);
+    .filter(isValidUnixTimestamp);
 
   if (timestamps.length > 0) {
     return formatRelativeTimestamp(Math.min(...timestamps));
@@ -198,7 +198,7 @@ function getProjectCreatedTime(
 ): string {
   const timestamps = containers
     .map((container) => container.createdAt)
-    .filter(Boolean);
+    .filter(isValidUnixTimestamp);
 
   if (timestamps.length > 0) {
     return formatRelativeTimestamp(Math.min(...timestamps));
@@ -242,6 +242,10 @@ function formatDuration(totalSeconds: number): string {
   }
 
   return parts.join(" ") || "<1m";
+}
+
+function isValidUnixTimestamp(timestampSeconds: number): boolean {
+  return Number.isFinite(timestampSeconds) && timestampSeconds > 0;
 }
 
 function compactDuration(duration: string): string {
