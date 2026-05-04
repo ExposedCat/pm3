@@ -5,13 +5,13 @@ import type {
 } from "../commands.ts";
 import { withNamedProject } from "../commands.ts";
 import { inputError } from "../errors.ts";
+import { green, red, underline, yellow } from "../output/color.ts";
+import { requireArgument, requireNoExtraArgs } from "../utils.ts";
 import {
   formatListCell,
   formatProjectState,
   type ProjectListContainer,
 } from "./list.ts";
-import { green, red, underline, yellow } from "../output/color.ts";
-import { requireArgument, requireNoExtraArgs } from "../utils.ts";
 
 export type ShowCommand = CliCommand<"show"> & {
   name: string;
@@ -111,9 +111,9 @@ function formatProjectDetails(
 ): string {
   const startup = enabled === 1 ? "enabled" : "disabled";
   return [
-    `${formatStateDot(projectState.state)} ${name} - ${
-      formatProjectStateSummary(projectState)
-    }`,
+    `${formatStateDot(projectState.state)} ${name} - ${formatProjectStateSummary(
+      projectState,
+    )}`,
     ...formatDetailLines(
       [
         ["Startup", formatStartupValue(startup)],
@@ -126,15 +126,10 @@ function formatProjectDetails(
 
 function formatServiceDetails(row: ServiceRow): string {
   return [
-    `${" ".repeat(4)}${formatStateDot(row.state)} ${row.service} - ${
-      formatProjectStateSummary(row)
-    }`,
-    ...formatDetailLines(
-      [
-        ["Ports", row.ports || "-"],
-      ],
-      8,
-    ),
+    `${" ".repeat(4)}${formatStateDot(row.state)} ${row.service} - ${formatProjectStateSummary(
+      row,
+    )}`,
+    ...formatDetailLines([["Ports", row.ports || "-"]], 8),
   ].join("\n");
 }
 
