@@ -13,6 +13,7 @@ import {
 import { listCommand } from "./commands/list.ts";
 import { logsCommand } from "./commands/logs.ts";
 import { removeCommand } from "./commands/remove.ts";
+import { showCommand } from "./commands/show.ts";
 import { viewCommand } from "./commands/view.ts";
 import { inputError, usageError } from "./errors.ts";
 import type { RunLineStream, RunProcess } from "./runtime/process.ts";
@@ -26,6 +27,7 @@ export const commandDefinitions = [
   restartCommand,
   logsCommand,
   listCommand,
+  showCommand,
   viewCommand,
   removeCommand,
   daemonCommand,
@@ -76,7 +78,7 @@ export function parseArgs(args: string[]): ParsedCommand {
   }
 
   const definition = commandDefinitions.find((command) =>
-    command.names.includes(commandName),
+    command.names.includes(commandName)
   );
   if (!definition) {
     throw usageError(`Unknown command: ${commandName}`);

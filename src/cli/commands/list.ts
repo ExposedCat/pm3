@@ -11,6 +11,16 @@ export type ListCommand = CliCommand<"list"> & {
   detailed: boolean;
 };
 
+export type ProjectListContainer = {
+  createdAt: number;
+  exitedAt: number;
+  ports: string;
+  service: string;
+  startedAt: number;
+  state: string;
+  status: string;
+};
+
 export const listCommand = {
   names: ["list"],
   args: [],
@@ -58,15 +68,6 @@ type ProjectListProject = {
   workingDir: string;
 };
 
-type ProjectListContainer = {
-  createdAt: number;
-  exitedAt: number;
-  ports: string;
-  startedAt: number;
-  state: string;
-  status: string;
-};
-
 async function runListCommand(
   options: RunCommandOptions,
   listOptions: ListOptions,
@@ -84,7 +85,7 @@ async function runListCommand(
           listOptions,
           options,
           listProjectContainers,
-        ),
+        )
       ),
     );
 
@@ -110,7 +111,7 @@ async function buildProjectListRow(
   };
 }
 
-function formatProjectState(
+export function formatProjectState(
   containers: readonly ProjectListContainer[],
   options: ListOptions,
 ): Omit<ProjectListRow, "name" | "startup"> {
@@ -167,7 +168,7 @@ function getProjectStateDuration(
 
   const timestamps = containers
     .map((container) =>
-      state === "up" ? container.startedAt : container.exitedAt,
+      state === "up" ? container.startedAt : container.exitedAt
     )
     .filter(Boolean);
 
@@ -252,8 +253,7 @@ function compactDuration(duration: string): string {
   }
 
   const [, days, hours, minutes] = match;
-  const totalSeconds =
-    Number(days ?? 0) * 24 * 60 * 60 +
+  const totalSeconds = Number(days ?? 0) * 24 * 60 * 60 +
     Number(hours ?? 0) * 60 * 60 +
     Number(minutes ?? 0) * 60;
 
@@ -295,7 +295,7 @@ function printRows(
   );
 }
 
-function formatListCell(cell: {
+export function formatListCell(cell: {
   header: string | undefined;
   value: string;
 }): string {

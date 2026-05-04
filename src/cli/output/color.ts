@@ -22,6 +22,14 @@ export function yellow(value: string): string {
   return color(33, value);
 }
 
+export function bold(value: string): string {
+  return color(1, value);
+}
+
+export function underline(value: string): string {
+  return color(4, value);
+}
+
 export function color(code: number, value: string): string {
   return `\x1b[${code}m${value}\x1b[0m`;
 }
