@@ -97,5 +97,7 @@ export function resolveComposeHookCommand(
   service: string,
   event: ComposeHookEvent,
 ): string {
-  return config?.get(service)?.get(event) ?? config?.get("all")?.get(event) ?? "";
+  return (
+    config?.get(service)?.get(event) ?? config?.get("all")?.get(event) ?? ""
+  );
 }
