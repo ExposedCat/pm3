@@ -1,6 +1,8 @@
+import { parse as parseYaml } from "@std/yaml";
 import type { RunCommandOptions } from "../commands.ts";
 import { inputError } from "../errors.ts";
 import { green, red, yellow } from "../output/color.ts";
+import type { LoaderLine } from "../output/loader.ts";
 import {
   getComposeEventService,
   getComposeHealthStatus,
@@ -8,10 +10,22 @@ import {
   type PodmanEvent,
   parsePodmanEvent,
 } from "./compose_events.ts";
-import { listComposeServices, PODMAN_COMMAND } from "./compose_files.ts";
+import {
+  listComposeServices,
+  PODMAN_COMMAND,
+  PODMAN_COMPOSE_COMMAND,
+  readComposeConfig,
+} from "./compose_files.ts";
+import { parseComposeContainerJson } from "./compose_ps.ts";
 
 const EVENT_STREAM_STOP_GRACE_MS = 150;
 const HEALTH_SETTLE_TIMEOUT_MS = 30_000;
+const DEFAULT_HEALTH_INTERVAL_MS = 30_000;
+const DEFAULT_HEALTH_RETRIES = 3;
+const DEFAULT_HEALTH_START_PERIOD_MS = 0;
+const DEFAULT_HEALTH_TIMEOUT_MS = 30_000;
+const INFINITE_RETRY_ATTEMPTS = 3;
+const HEALTH_STATUS_POLL_INTERVAL_MS = 1_000;
 
 type ComposeProject = {
   name: string;
@@ -39,6 +53,16 @@ export function getComposeOperation(args: readonly string[]): string {
 }
 
 type ComposeOperation = ReturnType<typeof getComposeOperation>;
+
+type ComposeProgressHealthStatus =
+  | "starting"
+  | "healthy"
+  | "degraded"
+  | "timed_out";
+
+type ComposeHealthWaitPolicy = {
+  waitMs: number;
+};
 
 export type ComposeProgress = {
   captureComposeCommands: boolean;
@@ -97,7 +121,11 @@ export async function startComposeProgress(
   const finished = new Set<string>();
   const healthStarted = new Set<string>();
   const healthLines = new Map<string, string>();
-  const healthStatuses = new Map<string, "starting" | "healthy" | "degraded">();
+  const healthStatuses = new Map<string, ComposeProgressHealthStatus>();
+  const healthWaitPolicies = shouldTrackComposeHealth(operation)
+    ? await readComposeHealthWaitPolicies(project, runProcess)
+    : new Map<string, ComposeHealthWaitPolicy>();
+  const healthStartedAt = new Map<string, number>();
   const unhealthy = new Set<string>();
   let pendingHealthSettlement:
     | { promise: Promise<void>; resolve: () => void }
@@ -162,6 +190,21 @@ export async function startComposeProgress(
           service,
           output,
         );
+        if (
+          shouldTrackComposeHealth(operation) &&
+          healthWaitPolicies.has(service)
+        ) {
+          ensureComposeHealthProgress(
+            project.name,
+            healthStarted,
+            healthLines,
+            healthStatuses,
+            healthStartedAt,
+            service,
+            output,
+          );
+          refreshSettledHealthPromise();
+        }
       }
 
       const serviceStatus = getComposeServiceStatus(event);
@@ -186,6 +229,7 @@ export async function startComposeProgress(
         healthStarted,
         healthLines,
         healthStatuses,
+        healthStartedAt,
         unhealthy,
         service,
         healthStatus,
@@ -213,10 +257,33 @@ export async function startComposeProgress(
     shownNoticeCount: () => shownNoticeCount,
     async stop() {
       if (shouldTrackComposeHealth(operation)) {
-        await Promise.race([
-          pendingHealthSettlement?.promise ?? Promise.resolve(),
-          delay(HEALTH_SETTLE_TIMEOUT_MS),
-        ]);
+        await seedComposeHealthProgressAtStop(
+          project,
+          runProcess,
+          healthStarted,
+          healthLines,
+          healthStatuses,
+          healthStartedAt,
+          healthWaitPolicies,
+          output,
+        );
+        await settleComposeHealthProgress(
+          project,
+          runProcess,
+          project.name,
+          healthLines,
+          healthStatuses,
+          healthStartedAt,
+          healthWaitPolicies,
+          output,
+          refreshSettledHealthPromise,
+        );
+        finalizePendingComposeHealthAsTimedOut(
+          project.name,
+          healthLines,
+          healthStatuses,
+          output,
+        );
       }
       await delay(EVENT_STREAM_STOP_GRACE_MS);
       await stream.stop();
@@ -251,13 +318,6 @@ export async function startComposeProgress(
         const noticeService =
           getComposeNoticeService(services, line) || lastCommandService;
         if (noticeService) {
-          const parentLine = formatComposeProgressLine(
-            project.name,
-            finished.has(noticeService)
-              ? getFinishedComposeOperation(operation)
-              : operation,
-            noticeService,
-          );
           startComposeServiceProgress(
             project.name,
             operation,
@@ -265,15 +325,70 @@ export async function startComposeProgress(
             noticeService,
             output,
           );
-          output.writeLineAfter(parentLine, formattedNotice);
+          output.writeLineAfter(
+            formatComposeProgressLineId(project.name, noticeService),
+            createLoaderLine(
+              formattedNotice,
+              `notice:${project.name}/${noticeService}:${shownNoticeCount}`,
+            ),
+          );
         } else {
-          output.writeLine(formattedNotice);
+          output.writeLine(
+            createLoaderLine(formattedNotice, `notice:${shownNoticeCount}`),
+          );
         }
 
         shownNoticeCount += 1;
       }
     },
   };
+}
+
+async function seedComposeHealthProgressAtStop(
+  project: ComposeProject,
+  runProcess: (
+    command: import("./process.ts").ProcessCommand,
+  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
+  started: Set<string>,
+  lines: Map<string, string>,
+  statuses: Map<string, ComposeProgressHealthStatus>,
+  startedAt: Map<string, number>,
+  waitPolicies: ReadonlyMap<string, ComposeHealthWaitPolicy>,
+  output: ComposeOutput,
+): Promise<void> {
+  const currentStatuses = await readCurrentComposeHealthStatuses(
+    project,
+    runProcess,
+  );
+
+  for (const service of waitPolicies.keys()) {
+    const currentStatus = currentStatuses.get(service);
+    if (currentStatus === "healthy" || currentStatus === "degraded") {
+      if (statuses.get(service) === "starting") {
+        statuses.set(service, currentStatus);
+        startedAt.delete(service);
+        const finishedLine = formatComposeHealthFinishedLine(currentStatus);
+        output.finishLine(
+          formatComposeHealthLineId(project.name, service),
+          finishedLine,
+        );
+        lines.set(service, finishedLine);
+      }
+      continue;
+    }
+
+    if (!statuses.has(service)) {
+      ensureComposeHealthProgress(
+        project.name,
+        started,
+        lines,
+        statuses,
+        startedAt,
+        service,
+        output,
+      );
+    }
+  }
 }
 
 type ComposeProgressOptions = {
@@ -363,7 +478,7 @@ function startComposeServiceProgress(
   }
 
   started.add(service);
-  output.startLine(formatComposeProgressLine(projectName, operation, service));
+  output.startLine(createComposeProgressLine(projectName, operation, service));
 }
 
 function finishComposeProgress(
@@ -386,19 +501,25 @@ function finishComposeProgress(
   );
   if (!started.has(service)) {
     started.add(service);
-    output.startLine(line);
+    output.startLine(
+      createLoaderLine(line, formatComposeProgressLineId(projectName, service)),
+    );
   }
 
   finished.add(service);
-  output.finishLine(line, finishedLine);
+  output.finishLine(
+    formatComposeProgressLineId(projectName, service),
+    finishedLine,
+  );
 }
 
 function updateComposeHealthProgress(
   projectName: string,
-  parentOperation: string,
+  _parentOperation: string,
   started: Set<string>,
   lines: Map<string, string>,
-  statuses: Map<string, "starting" | "healthy" | "degraded">,
+  statuses: Map<string, ComposeProgressHealthStatus>,
+  startedAt: Map<string, number>,
   unhealthy: Set<string>,
   service: string,
   status: "starting" | "healthy" | "degraded",
@@ -414,22 +535,25 @@ function updateComposeHealthProgress(
   }
 
   statuses.set(service, status);
+  const lineId = formatComposeHealthLineId(projectName, service);
   const line = lines.get(service) ?? formatComposeHealthPendingLine();
   if (!started.has(service)) {
     started.add(service);
     output.startLineAfter(
-      formatComposeProgressLine(projectName, parentOperation, service),
-      line,
+      formatComposeProgressLineId(projectName, service),
+      createLoaderLine(line, lineId),
     );
     lines.set(service, line);
   }
 
   if (status === "starting") {
+    startedAt.set(service, startedAt.get(service) ?? Date.now());
     return true;
   }
 
+  startedAt.delete(service);
   const finishedLine = formatComposeHealthFinishedLine(status);
-  output.finishLine(line, finishedLine);
+  output.finishLine(lineId, finishedLine);
   lines.set(service, finishedLine);
 
   if (status === "degraded") {
@@ -441,6 +565,29 @@ function updateComposeHealthProgress(
   return true;
 }
 
+function ensureComposeHealthProgress(
+  projectName: string,
+  _started: Set<string>,
+  lines: Map<string, string>,
+  statuses: Map<string, ComposeProgressHealthStatus>,
+  startedAt: Map<string, number>,
+  service: string,
+  output: ComposeOutput,
+): void {
+  if (statuses.has(service)) {
+    return;
+  }
+
+  statuses.set(service, "starting");
+  startedAt.set(service, Date.now());
+  const line = formatComposeHealthPendingLine();
+  output.startLineAfter(
+    formatComposeProgressLineId(projectName, service),
+    createLoaderLine(line, formatComposeHealthLineId(projectName, service)),
+  );
+  lines.set(service, line);
+}
+
 function formatComposeProgressLine(
   projectName: string,
   operation: string,
@@ -449,12 +596,38 @@ function formatComposeProgressLine(
   return `${operation} ${projectName}/${service}`;
 }
 
+function createComposeProgressLine(
+  projectName: string,
+  operation: string,
+  service: string,
+): LoaderLine {
+  const text = formatComposeProgressLine(projectName, operation, service);
+  return createLoaderLine(
+    text,
+    formatComposeProgressLineId(projectName, service),
+  );
+}
+
+function formatComposeProgressLineId(
+  projectName: string,
+  service: string,
+): string {
+  return `progress:${projectName}/${service}`;
+}
+
+function formatComposeHealthLineId(
+  projectName: string,
+  service: string,
+): string {
+  return `health:${projectName}/${service}`;
+}
+
 function formatComposeHealthPendingLine(): string {
   return yellow("Checking health");
 }
 
 function formatComposeHealthFinishedLine(
-  status: "starting" | "healthy" | "degraded",
+  status: ComposeProgressHealthStatus,
 ): string {
   if (status === "healthy") {
     return green("Healthy");
@@ -462,6 +635,10 @@ function formatComposeHealthFinishedLine(
 
   if (status === "degraded") {
     return red("Unhealthy");
+  }
+
+  if (status === "timed_out") {
+    return yellow("Healthcheck timeout");
   }
 
   return formatComposeHealthPendingLine();
@@ -541,12 +718,343 @@ function unescapeLogfmtQuotedValue(value: string): string {
 }
 
 type ComposeOutput = {
-  finishLine(line: string, finishedLine: string): void;
-  startLineAfter(parentLine: string, line: string): void;
-  startLine(line: string): void;
-  writeLine(line: string): void;
-  writeLineAfter(parentLine: string, line: string): void;
+  finishLine(lineId: string, finishedLine: string): void;
+  startLineAfter(parentLineId: string, line: LoaderLine): void;
+  startLine(line: LoaderLine): void;
+  writeLine(line: LoaderLine): void;
+  writeLineAfter(parentLineId: string, line: LoaderLine): void;
 };
+
+function createLoaderLine(text: string, id = text): LoaderLine {
+  return {
+    id,
+    text,
+  };
+}
+
+async function settleComposeHealthProgress(
+  project: ComposeProject,
+  runProcess: (
+    command: import("./process.ts").ProcessCommand,
+  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
+  projectName: string,
+  lines: Map<string, string>,
+  statuses: Map<string, ComposeProgressHealthStatus>,
+  startedAt: Map<string, number>,
+  waitPolicies: ReadonlyMap<string, ComposeHealthWaitPolicy>,
+  output: ComposeOutput,
+  refreshSettledHealthPromise: () => void,
+): Promise<void> {
+  while (true) {
+    await reconcileComposeHealthProgress(
+      project,
+      runProcess,
+      projectName,
+      lines,
+      statuses,
+      startedAt,
+      output,
+    );
+    finalizeExpiredComposeHealth(
+      projectName,
+      lines,
+      statuses,
+      startedAt,
+      waitPolicies,
+      output,
+      Date.now(),
+    );
+    refreshSettledHealthPromise();
+
+    const nextDeadline = getNextComposeHealthDeadline(
+      statuses,
+      startedAt,
+      waitPolicies,
+    );
+    if (nextDeadline === undefined) {
+      return;
+    }
+
+    await delay(
+      Math.max(
+        0,
+        Math.min(HEALTH_STATUS_POLL_INTERVAL_MS, nextDeadline - Date.now()),
+      ),
+    );
+  }
+}
+
+async function reconcileComposeHealthProgress(
+  project: ComposeProject,
+  runProcess: (
+    command: import("./process.ts").ProcessCommand,
+  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
+  projectName: string,
+  lines: Map<string, string>,
+  statuses: Map<string, ComposeProgressHealthStatus>,
+  startedAt: Map<string, number>,
+  output: ComposeOutput,
+): Promise<void> {
+  const currentStatuses = await readCurrentComposeHealthStatuses(
+    project,
+    runProcess,
+  );
+
+  for (const [service, status] of currentStatuses) {
+    if (statuses.get(service) !== "starting") {
+      continue;
+    }
+
+    if (status !== "healthy" && status !== "degraded") {
+      continue;
+    }
+
+    statuses.set(service, status);
+    startedAt.delete(service);
+    const finishedLine = formatComposeHealthFinishedLine(status);
+    output.finishLine(
+      formatComposeHealthLineId(projectName, service),
+      finishedLine,
+    );
+    lines.set(service, finishedLine);
+  }
+}
+
+function finalizeExpiredComposeHealth(
+  projectName: string,
+  lines: Map<string, string>,
+  statuses: Map<string, ComposeProgressHealthStatus>,
+  startedAt: ReadonlyMap<string, number>,
+  waitPolicies: ReadonlyMap<string, ComposeHealthWaitPolicy>,
+  output: ComposeOutput,
+  now: number,
+): void {
+  for (const [service, status] of statuses) {
+    if (status !== "starting") {
+      continue;
+    }
+
+    const startedAtMs = startedAt.get(service);
+    const waitMs =
+      waitPolicies.get(service)?.waitMs ?? HEALTH_SETTLE_TIMEOUT_MS;
+    if (startedAtMs === undefined || startedAtMs + waitMs > now) {
+      continue;
+    }
+
+    statuses.set(service, "timed_out");
+    const finishedLine = formatComposeHealthFinishedLine("timed_out");
+    output.finishLine(
+      formatComposeHealthLineId(projectName, service),
+      finishedLine,
+    );
+    lines.set(service, finishedLine);
+  }
+}
+
+function finalizePendingComposeHealthAsTimedOut(
+  projectName: string,
+  lines: Map<string, string>,
+  statuses: Map<string, ComposeProgressHealthStatus>,
+  output: ComposeOutput,
+): void {
+  for (const [service, status] of statuses) {
+    if (status !== "starting") {
+      continue;
+    }
+
+    statuses.set(service, "timed_out");
+    const finishedLine = formatComposeHealthFinishedLine("timed_out");
+    output.finishLine(
+      formatComposeHealthLineId(projectName, service),
+      finishedLine,
+    );
+    lines.set(service, finishedLine);
+  }
+}
+
+function getNextComposeHealthDeadline(
+  statuses: ReadonlyMap<string, ComposeProgressHealthStatus>,
+  startedAt: ReadonlyMap<string, number>,
+  waitPolicies: ReadonlyMap<string, ComposeHealthWaitPolicy>,
+): number | undefined {
+  let nextDeadline: number | undefined;
+
+  for (const [service, status] of statuses) {
+    if (status !== "starting") {
+      continue;
+    }
+
+    const startedAtMs = startedAt.get(service);
+    const waitMs =
+      waitPolicies.get(service)?.waitMs ?? HEALTH_SETTLE_TIMEOUT_MS;
+    const deadline = (startedAtMs ?? Date.now()) + waitMs;
+    nextDeadline =
+      nextDeadline === undefined ? deadline : Math.min(nextDeadline, deadline);
+  }
+
+  return nextDeadline;
+}
+
+async function readComposeHealthWaitPolicies(
+  project: ComposeProject,
+  runProcess: (
+    command: import("./process.ts").ProcessCommand,
+  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
+): Promise<Map<string, ComposeHealthWaitPolicy>> {
+  const discovery = await readComposeConfig(project, runProcess);
+  if (discovery.kind !== "config") {
+    return new Map();
+  }
+
+  const parsed = parseYaml(discovery.text);
+  if (!isRecord(parsed)) {
+    return new Map();
+  }
+
+  const services = getRecord(parsed.services);
+  return new Map(
+    Object.entries(services).flatMap(([service, config]) => {
+      const policy = parseComposeHealthWaitPolicy(getRecord(config));
+      return policy ? [[service, policy] as const] : [];
+    }),
+  );
+}
+
+async function readCurrentComposeHealthStatuses(
+  project: ComposeProject,
+  runProcess: (
+    command: import("./process.ts").ProcessCommand,
+  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
+): Promise<Map<string, "starting" | "healthy" | "degraded">> {
+  const result = await runProcess({
+    command: PODMAN_COMPOSE_COMMAND,
+    args: ["ps", "--format", "json"],
+    cwd: project.workingDir,
+    captureOutput: true,
+  });
+
+  if (result.code !== 0) {
+    return new Map();
+  }
+
+  return new Map(
+    parseComposeContainerJson(result.stdout ?? "")
+      .filter(
+        (
+          container,
+        ): container is typeof container & {
+          healthStatus: "starting" | "healthy" | "degraded";
+        } => Boolean(container.service && container.healthStatus),
+      )
+      .map((container) => [container.service, container.healthStatus] as const),
+  );
+}
+
+function parseComposeHealthWaitPolicy(
+  serviceConfig: Record<string, unknown>,
+): ComposeHealthWaitPolicy | undefined {
+  const healthcheck = getRecord(serviceConfig.healthcheck);
+  if (Object.keys(healthcheck).length === 0) {
+    return undefined;
+  }
+
+  const retries = parseComposeHealthRetries(healthcheck.retries);
+  const attempts = retries === "infinite" ? INFINITE_RETRY_ATTEMPTS : retries;
+  const intervalMs = parseComposeHealthDuration(
+    healthcheck.interval,
+    DEFAULT_HEALTH_INTERVAL_MS,
+  );
+  const timeoutMs = parseComposeHealthDuration(
+    healthcheck.timeout,
+    DEFAULT_HEALTH_TIMEOUT_MS,
+  );
+  const startPeriodMs = parseComposeHealthDuration(
+    healthcheck.start_period,
+    DEFAULT_HEALTH_START_PERIOD_MS,
+  );
+
+  return {
+    waitMs: startPeriodMs + attempts * Math.max(intervalMs, timeoutMs),
+  };
+}
+
+function parseComposeHealthRetries(value: unknown): number | "infinite" {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value <= 0 ? "infinite" : Math.floor(value);
+  }
+
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const retries = Number(value.trim());
+    return retries <= 0 ? "infinite" : retries;
+  }
+
+  return DEFAULT_HEALTH_RETRIES;
+}
+
+function parseComposeHealthDuration(
+  value: unknown,
+  fallbackMs: number,
+): number {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return fallbackMs;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === "disable") {
+    return fallbackMs;
+  }
+
+  const pattern = /(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g;
+  let total = 0;
+  let consumed = 0;
+
+  for (const match of normalized.matchAll(pattern)) {
+    const amount = Number(match[1]);
+    const unit = match[2];
+    total += amount * getComposeDurationUnitMs(unit);
+    consumed += match[0].length;
+  }
+
+  return consumed === normalized.length && total >= 0
+    ? Math.ceil(total)
+    : fallbackMs;
+}
+
+function getComposeDurationUnitMs(unit: string): number {
+  if (unit === "h") {
+    return 3_600_000;
+  }
+
+  if (unit === "m") {
+    return 60_000;
+  }
+
+  if (unit === "s") {
+    return 1_000;
+  }
+
+  if (unit === "ms") {
+    return 1;
+  }
+
+  if (unit === "us" || unit === "µs") {
+    return 0.001;
+  }
+
+  return 0.000001;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));

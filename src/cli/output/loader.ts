@@ -1,12 +1,17 @@
 const LOADER_FRAMES = ["-", "\\", "|", "/"] as const;
 
+export type LoaderLine = {
+  id: string;
+  text: string;
+};
+
 export type Loader = {
-  finishLine(line: string, finishedLine: string): void;
-  startLine(line: string): void;
-  startLineAfter(parentLine: string, line: string): void;
+  finishLine(lineId: string, finishedText: string): void;
+  startLine(line: LoaderLine): void;
+  startLineAfter(parentLineId: string, line: LoaderLine): void;
   stop(): void;
-  writeLine(line: string): void;
-  writeLineAfter(parentLine: string, line: string): void;
+  writeLine(line: LoaderLine): void;
+  writeLineAfter(parentLineId: string, line: LoaderLine): void;
 };
 
 export function startLoader(
@@ -15,23 +20,43 @@ export function startLoader(
 ): Loader {
   if (!options.enabled || !isTerminal(Deno.stdout)) {
     const childLines = new Set<string>();
+    const activeLines = new Map<string, LoaderLine>();
     return {
-      finishLine: (line, finishedLine) =>
-        console.log(`${childLines.has(line) ? "    " : ""}${finishedLine}`),
-      startLine: (line) => console.log(line),
-      startLineAfter: (_parentLine, line) => {
-        childLines.add(line);
-        console.log(`    ${line}...`);
+      finishLine: (lineId, finishedText) => {
+        activeLines.delete(lineId);
+        console.log(`${childLines.has(lineId) ? "    " : ""}${finishedText}`);
       },
-      stop: () => {},
-      writeLine: (line) => console.log(line),
-      writeLineAfter: (_parentLine, line) => console.log(`    ${line}`),
+      startLine: (line) => {
+        activeLines.set(line.id, line);
+        console.log(line.text);
+      },
+      startLineAfter: (_parentLineId, line) => {
+        childLines.add(line.id);
+        activeLines.set(line.id, line);
+        console.log(`    ${line.text}...`);
+      },
+      stop: () => {
+        for (const line of activeLines.values()) {
+          if (
+            childLines.has(line.id) &&
+            stripAnsi(line.text) === "Checking health"
+          ) {
+            console.log(
+              `    ${line.text.replace("Checking health", "Healthcheck timeout")}`,
+            );
+          }
+        }
+        activeLines.clear();
+      },
+      writeLine: (line) => console.log(line.text),
+      writeLineAfter: (_parentLineId, line) => console.log(`    ${line.text}`),
     };
   }
 
   let index = 0;
   let renderedRowCount = 0;
-  const lines: { active: boolean; indent: string; label: string }[] = [];
+  const lines: { active: boolean; id: string; indent: string; text: string }[] =
+    [];
   const encoder = new TextEncoder();
   const render = () => {
     const frame = LOADER_FRAMES[index % LOADER_FRAMES.length];
@@ -45,8 +70,8 @@ export function startLoader(
       lines.length > 0
         ? lines.map((line) =>
             line.active
-              ? `${frame} ${line.indent}${line.label}...`
-              : `  ${line.indent}${line.label}`,
+              ? `${frame} ${line.indent}${line.text}...`
+              : `  ${line.indent}${line.text}`,
           )
         : [`${frame} ${label}...`];
 
@@ -68,31 +93,32 @@ export function startLoader(
   render();
 
   return {
-    finishLine(lineLabel: string, finishedLabel = lineLabel) {
-      const line = lines.find((entry) => entry.label === lineLabel);
+    finishLine(lineId: string, finishedText: string) {
+      const line = lines.find((entry) => entry.id === lineId);
       if (line) {
         line.active = false;
-        line.label = finishedLabel;
+        line.text = finishedText;
         render();
       }
     },
-    startLine(lineLabel: string) {
-      if (!lines.some((line) => line.label === lineLabel)) {
-        lines.push({ active: true, indent: "", label: lineLabel });
+    startLine(line: LoaderLine) {
+      if (!lines.some((entry) => entry.id === line.id)) {
+        lines.push({ active: true, id: line.id, indent: "", text: line.text });
         render();
       }
     },
-    startLineAfter(parentLine: string, lineLabel: string) {
-      if (lines.some((line) => line.label === lineLabel)) {
+    startLineAfter(parentLineId: string, line: LoaderLine) {
+      if (lines.some((entry) => entry.id === line.id)) {
         return;
       }
 
-      const parentIndex = lines.findIndex((line) => line.label === parentLine);
+      const parentIndex = lines.findIndex((entry) => entry.id === parentLineId);
       const insertIndex = parentIndex === -1 ? lines.length : parentIndex + 1;
       lines.splice(insertIndex, 0, {
         active: true,
+        id: line.id,
         indent: "  ",
-        label: lineLabel,
+        text: line.text,
       });
       render();
     },
@@ -106,33 +132,45 @@ export function startLoader(
       }
 
       for (const line of lines) {
+        if (
+          line.active &&
+          line.indent === "  " &&
+          stripAnsi(line.text) === "Checking health"
+        ) {
+          line.text = line.text.replace(
+            "Checking health",
+            "Healthcheck timeout",
+          );
+        }
         line.active = false;
       }
       render();
     },
-    writeLine(lineLabel: string) {
-      if (lines.some((line) => line.label === lineLabel)) {
+    writeLine(line: LoaderLine) {
+      if (lines.some((entry) => entry.id === line.id)) {
         return;
       }
 
       lines.push({
         active: false,
+        id: line.id,
         indent: "",
-        label: lineLabel,
+        text: line.text,
       });
       render();
     },
-    writeLineAfter(parentLine: string, lineLabel: string) {
-      if (lines.some((line) => line.label === lineLabel)) {
+    writeLineAfter(parentLineId: string, line: LoaderLine) {
+      if (lines.some((entry) => entry.id === line.id)) {
         return;
       }
 
-      const parentIndex = lines.findIndex((line) => line.label === parentLine);
+      const parentIndex = lines.findIndex((entry) => entry.id === parentLineId);
       const insertIndex = parentIndex === -1 ? lines.length : parentIndex + 1;
       lines.splice(insertIndex, 0, {
         active: false,
+        id: line.id,
         indent: "  ",
-        label: lineLabel,
+        text: line.text,
       });
       render();
     },

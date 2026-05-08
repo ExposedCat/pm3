@@ -1042,7 +1042,10 @@ async function runComposeCommand(
       progress,
     };
   } finally {
-    loader.stop();
-    await progress.stop();
+    try {
+      await progress.stop();
+    } finally {
+      loader.stop();
+    }
   }
 }
