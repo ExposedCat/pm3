@@ -35,6 +35,12 @@ export function formatCliError(error: unknown): CliErrorOutput {
     };
   }
 
+  if (error instanceof Error && error.message) {
+    return {
+      message: error.message,
+    };
+  }
+
   return {
     message: "Command failed",
   };
