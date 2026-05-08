@@ -10,8 +10,6 @@ import type {
 } from "../cli/runtime/compose_events.ts";
 import {
   type ComposeHookEvent,
-  type ComposeHooksConfig,
-  readComposeHooksConfig,
   resolveComposeHookCommand,
 } from "../cli/runtime/compose_hooks.ts";
 import {
@@ -71,10 +69,6 @@ export async function runDaemon(
     const { runSystemProcess } = await import("../cli/runtime/process.ts");
     const runProcess = commandOptions.runProcess ?? runSystemProcess;
     const runHook = createComposeHookRunner(runProcess, hookErrors);
-    const hookConfigs = await loadComposeHookConfigs(
-      startupProjects,
-      runProcess,
-    );
     const watcherConfigs = await loadComposeWatcherConfigs(
       startupProjects,
       runProcess,
@@ -94,7 +88,6 @@ export async function runDaemon(
         lifecycleOperations,
         healthStatuses,
         serviceStatuses,
-        hookConfigs,
         runHook,
         project,
         watcherConfigs.get(project.name),
@@ -107,7 +100,6 @@ export async function runDaemon(
         lifecycleOperations,
         healthStatuses,
         serviceStatuses,
-        hookConfigs,
         runHook,
         message,
       );
@@ -133,7 +125,7 @@ export async function runDaemon(
             daemonProject,
             service,
             normalizeLifecycleServiceStatus(lifecycleOperation, serviceStatus),
-            { hookConfigs, logKnownChanges: true, runHook },
+            { logKnownChanges: true, runHook },
           );
           return;
         }
@@ -144,7 +136,7 @@ export async function runDaemon(
           serviceStatuses,
           daemonProject,
           { healthStatus, service, serviceStatus },
-          { hookConfigs, logKnownChanges: true, runHook },
+          { logKnownChanges: true, runHook },
         ).then(() =>
           enforceComposeWatcherPolicy(
             db,
@@ -152,7 +144,6 @@ export async function runDaemon(
             lifecycleOperations,
             healthStatuses,
             serviceStatuses,
-            hookConfigs,
             runHook,
             daemonProject,
             watcherConfigs.get(daemonProject.name),
@@ -221,7 +212,6 @@ type DaemonProject = Awaited<ReturnType<typeof listProjects>>[number];
 type EnabledProject = DaemonProject & { enabled: 1 };
 
 type TrackStatusOptions = {
-  hookConfigs?: ReadonlyMap<string, ComposeHooksConfig>;
   logKnownChanges?: boolean;
   runHook?: ComposeHookRunner;
 };
@@ -262,29 +252,12 @@ async function loadComposeWatcherConfigs(
   return configs;
 }
 
-async function loadComposeHookConfigs(
-  projects: readonly DaemonProject[],
-  runProcess: (
-    command: import("../cli/runtime/process.ts").ProcessCommand,
-  ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
-): Promise<Map<string, ComposeHooksConfig>> {
-  const configs = new Map<string, ComposeHooksConfig>();
-
-  for (const project of projects) {
-    const config = await readComposeHooksConfig(project, runProcess);
-    configs.set(project.name, config);
-  }
-
-  return configs;
-}
-
 async function handleDaemonMessage(
   db: PM3Database,
   projects: readonly DaemonProject[],
   lifecycleOperations: Map<string, DaemonLifecycleOperation>,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
-  hookConfigs: ReadonlyMap<string, ComposeHooksConfig>,
   runHook: ComposeHookRunner,
   message: DaemonMessage,
 ): Promise<void> {
@@ -297,7 +270,6 @@ async function handleDaemonMessage(
     lifecycleOperations.set(message.project, message.operation);
     if (message.operation === "start") {
       await markProjectServicesStarting(db, serviceStatuses, project, {
-        hookConfigs,
         logKnownChanges: true,
         runHook,
       });
@@ -306,7 +278,6 @@ async function handleDaemonMessage(
       message.operation === "restart"
     ) {
       await markProjectServicesStopping(db, serviceStatuses, project, {
-        hookConfigs,
         logKnownChanges: true,
         runHook,
       });
@@ -321,7 +292,6 @@ async function handleDaemonMessage(
 
   if (message.operation === "stop") {
     await markProjectServicesStopped(db, serviceStatuses, project, {
-      hookConfigs,
       logKnownChanges: true,
       runHook,
     });
@@ -337,7 +307,7 @@ async function handleDaemonMessage(
       project,
       health.service,
       health.status,
-      { hookConfigs, logKnownChanges: true, runHook },
+      { logKnownChanges: true, runHook },
     );
   }
   for (const state of message.state) {
@@ -347,7 +317,7 @@ async function handleDaemonMessage(
       project,
       state.service,
       state.status,
-      { hookConfigs, logKnownChanges: true, runHook },
+      { logKnownChanges: true, runHook },
     );
   }
 }
@@ -403,12 +373,7 @@ async function trackHealthStatus(
     console.log(`${project.name}/${service} ${status}`);
   }
   if (previousStatus !== status) {
-    await options.runHook?.(
-      options.hookConfigs?.get(project.name),
-      project,
-      service,
-      status,
-    );
+    await options.runHook?.(project, service, status);
   }
 }
 
@@ -432,12 +397,7 @@ async function trackServiceStatus(
     console.log(`${project.name}/${service} ${status}`);
   }
   if (previousStatus !== status) {
-    await options.runHook?.(
-      options.hookConfigs?.get(project.name),
-      project,
-      service,
-      status,
-    );
+    await options.runHook?.(project, service, status);
   }
 }
 
@@ -509,7 +469,6 @@ async function enforceComposeWatcherPolicy(
   lifecycleOperations: Map<string, DaemonLifecycleOperation>,
   healthStatuses: Map<string, ProjectComposeHealthStatus>,
   serviceStatuses: Map<string, ProjectComposeServiceStatus>,
-  hookConfigs: ReadonlyMap<string, ComposeHooksConfig>,
   runHook: ComposeHookRunner,
   project: Pick<DaemonProject, "id" | "name" | "workingDir">,
   config: ComposeStartupConfig | undefined,
@@ -533,7 +492,6 @@ async function enforceComposeWatcherPolicy(
 
   lifecycleOperations.set(project.name, "stop");
   await markProjectServicesStopping(db, serviceStatuses, project, {
-    hookConfigs,
     logKnownChanges: true,
     runHook,
   });
@@ -616,7 +574,6 @@ function listKnownProjectServices(
 }
 
 type ComposeHookRunner = (
-  hooks: ComposeHooksConfig | undefined,
   project: Pick<DaemonProject, "name" | "workingDir">,
   service: string,
   event: ComposeHookEvent,
@@ -628,8 +585,12 @@ function createComposeHookRunner(
   ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
   hookErrors: Set<string>,
 ): ComposeHookRunner {
-  return async (hooks, project, service, event) => {
-    const command = resolveComposeHookCommand(hooks, service, event);
+  return async (project, service, event) => {
+    const command = resolveComposeHookCommand({
+      event,
+      project: project.name,
+      service,
+    });
     if (!command) {
       return;
     }
