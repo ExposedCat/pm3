@@ -46,7 +46,7 @@ install -Dm0644 %{SOURCE2} %{buildroot}%{_userunitdir}/pm3.service
 
 %files
 %license LICENSE.md
-%doc README.md TODO.md
+%doc README.md
 %{_bindir}/pm3
 %{_userunitdir}/pm3.service
 

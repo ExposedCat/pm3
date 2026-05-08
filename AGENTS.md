@@ -2,7 +2,6 @@
 
 - podman-based CLI container orchestrator alternative to pm2
 - Deno, SQlite, Kysely
-- see [TODO.md](./TODO.md) for plans and notes on the project
 
 # Code Requirements
 
