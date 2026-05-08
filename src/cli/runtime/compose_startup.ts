@@ -19,13 +19,11 @@ type ComposeServiceDependency = {
   condition: ComposeDependencyCondition;
 };
 
-type ComposeStartupStopWhenUnstartable = "" | "all";
-type ComposeStartupMode = "startup" | "watcher";
+type ComposeHealthCheckAt = "startup" | "always";
 
 type ComposeStartupPolicy = {
-  mode: ComposeStartupMode;
   requiredServices: readonly string[];
-  stopWhenUnstartable: ComposeStartupStopWhenUnstartable;
+  serviceCheckAt: ReadonlyMap<string, ComposeHealthCheckAt>;
 };
 
 export type ComposeStartupConfig = {
@@ -119,11 +117,8 @@ export async function readComposeStartupConfig(
     );
   }
 
-  const config = parseComposeStartupConfig(discovery);
-  if (
-    config.policy.stopWhenUnstartable !== "all" &&
-    config.policy.requiredServices.length === 0
-  ) {
+  const config = parseComposeStartupConfig(discovery, project.name);
+  if (config.policy.requiredServices.length === 0) {
     return undefined;
   }
 
@@ -140,6 +135,7 @@ function createComposeStartupServiceState(): ComposeStartupServiceState {
 
 function parseComposeStartupConfig(
   discovery: Extract<ComposeConfigDiscovery, { kind: "config" }>,
+  projectName: string,
 ): ComposeStartupConfig {
   const parsed = parseYaml(discovery.text);
   if (!isRecord(parsed)) {
@@ -157,7 +153,7 @@ function parseComposeStartupConfig(
     );
   }
 
-  const policy = parseComposeStartupPolicy(parsed, serviceNames);
+  const policy = parseComposeStartupPolicy(parsed, projectName, serviceNames);
   return {
     dependencies,
     policy,
@@ -167,36 +163,76 @@ function parseComposeStartupConfig(
 
 function parseComposeStartupPolicy(
   config: Record<string, unknown>,
+  projectName: string,
   services: readonly string[],
 ): ComposeStartupPolicy {
   const extension = getRecord(config["x-pm3"]);
-  const startup = getRecord(extension.startup);
-  const mode = startup.mode === "watcher" ? "watcher" : "startup";
-  const stopWhenUnstartable =
-    startup.stop_when_unstartable === "all" ? "all" : "";
-  const requiredServices = Array.isArray(startup.required_services)
-    ? startup.required_services.filter(
-        (service): service is string =>
-          typeof service === "string" && service.length > 0,
-      )
-    : [];
+  const project = getRecord(extension[projectName]);
+  const requiredServices = parseRequiredServices(
+    project.required_services,
+    services,
+  );
 
   const unknownRequired = requiredServices.filter(
     (service) => !services.includes(service),
   );
   if (unknownRequired.length > 0) {
     throw inputError(
-      `Unknown x-pm3.startup.required_services entries: ${unknownRequired.join(
+      `Unknown x-pm3.${projectName}.required_services entries: ${unknownRequired.join(
         ", ",
       )}`,
     );
   }
 
+  const serviceCheckAt = new Map<string, ComposeHealthCheckAt>();
+  const fallbackService = getRecord(project.all);
+
+  for (const service of services) {
+    const serviceConfig = getRecord(project[service]);
+    serviceCheckAt.set(
+      service,
+      parseServiceHealthCheckAt(serviceConfig, fallbackService),
+    );
+  }
+
   return {
-    mode,
     requiredServices,
-    stopWhenUnstartable,
+    serviceCheckAt,
   };
+}
+
+function parseRequiredServices(
+  value: unknown,
+  services: readonly string[],
+): readonly string[] {
+  if (value === "all") {
+    return [...services];
+  }
+
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(
+    (service): service is string =>
+      typeof service === "string" && service.length > 0,
+  );
+}
+
+function parseServiceHealthCheckAt(
+  serviceConfig: Record<string, unknown>,
+  fallbackConfig: Record<string, unknown>,
+): ComposeHealthCheckAt {
+  const serviceHealth = getRecord(serviceConfig.health);
+  if (serviceHealth.check_at === "always") {
+    return "always";
+  }
+  if (serviceHealth.check_at === "startup") {
+    return "startup";
+  }
+
+  const fallbackHealth = getRecord(fallbackConfig.health);
+  return fallbackHealth.check_at === "always" ? "always" : "startup";
 }
 
 export function evaluateComposeStartupPolicy(
@@ -211,22 +247,6 @@ export function evaluateComposeStartupPolicy(
     return `Required services permanently unstartable: ${requiredBlocked.join(
       ", ",
     )}`;
-  }
-
-  if (config.policy.stopWhenUnstartable !== "all") {
-    return "";
-  }
-
-  const remaining = config.services.filter(
-    (service) => (classifications.get(service) ?? "waiting") !== "started",
-  );
-  if (
-    remaining.length > 0 &&
-    remaining.every((service) =>
-      isTerminalClassification(classifications.get(service) ?? "waiting"),
-    )
-  ) {
-    return `Startup permanently blocked: ${remaining.join(", ")}`;
   }
 
   return "";
@@ -299,7 +319,10 @@ function classifyComposeStartupService(
   }
 
   const serviceState = state.get(service);
-  if (config.policy.mode === "startup" && serviceState?.everStarted) {
+  if (
+    getComposeServiceHealthCheckAt(config, service) === "startup" &&
+    serviceState?.everStarted
+  ) {
     classifications.set(service, "started");
     return "started";
   }
@@ -389,6 +412,13 @@ function isTerminalClassification(
   classification: ComposeStartupClassification,
 ): boolean {
   return classification === "failed" || classification === "blocked_terminal";
+}
+
+export function getComposeServiceHealthCheckAt(
+  config: ComposeStartupConfig,
+  service: string,
+): ComposeHealthCheckAt {
+  return config.policy.serviceCheckAt.get(service) ?? "startup";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

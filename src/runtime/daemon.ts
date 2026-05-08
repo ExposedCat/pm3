@@ -16,6 +16,7 @@ import {
   type ComposeStartupConfig,
   type ComposeStartupServiceState,
   evaluateComposeStartupPolicy,
+  getComposeServiceHealthCheckAt,
   readComposeStartupConfig,
 } from "../cli/runtime/compose_startup.ts";
 import type { PM3Database } from "../database/database.ts";
@@ -244,7 +245,12 @@ async function loadComposeWatcherConfigs(
 
   for (const project of projects) {
     const config = await readComposeStartupConfig(project, runProcess);
-    if (config?.policy.mode === "watcher") {
+    const shouldWatch =
+      config?.policy.requiredServices.some(
+        (service) =>
+          getComposeServiceHealthCheckAt(config, service) === "always",
+      ) ?? false;
+    if (config && shouldWatch) {
       configs.set(project.name, config);
     }
   }

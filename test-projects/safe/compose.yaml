@@ -41,7 +41,9 @@ x-pm3:
       starting: ../hooks/zenity-state.sh
       stopped: ../hooks/zenity-state.sh
       stopping: ../hooks/zenity-state.sh
-  startup:
-    mode: watcher
+  safe:
+    prebuilt:
+      health:
+        check_at: always
     required_services:
       - prebuilt
