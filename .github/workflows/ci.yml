@@ -3,6 +3,13 @@ name: CI
 on:
   pull_request:
   push:
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: Force release even when package metadata did not change
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -28,7 +35,7 @@ jobs:
     name: Build and release
     runs-on: ubuntu-latest
     needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
 
@@ -45,6 +52,8 @@ jobs:
 
       - name: Detect pending release
         id: package
+        env:
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release }}
         run: ./scripts/detect-pending-release.sh "${{ github.event.before }}" "${{ github.sha }}"
 
       - name: Install RPM tooling

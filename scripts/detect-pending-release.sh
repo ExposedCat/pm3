@@ -5,15 +5,20 @@ set -euo pipefail
 base_ref="${1:-}"
 head_ref="${2:-HEAD}"
 package_file=".tito/packages/pm3"
+force_release="${FORCE_RELEASE:-false}"
 
-if [[ -z "$base_ref" || "$base_ref" == "0000000000000000000000000000000000000000" ]]; then
+if [[ "$force_release" == "true" ]]; then
+  changed=true
+elif [[ -z "$base_ref" || "$base_ref" == "0000000000000000000000000000000000000000" ]]; then
   base_ref="$(git rev-list --max-parents=0 HEAD)"
 fi
 
-if git diff --quiet "$base_ref" "$head_ref" -- "$package_file"; then
-  changed=false
-else
-  changed=true
+if [[ "${changed:-}" != "true" ]]; then
+  if git diff --quiet "$base_ref" "$head_ref" -- "$package_file"; then
+    changed=false
+  else
+    changed=true
+  fi
 fi
 
 version=""
