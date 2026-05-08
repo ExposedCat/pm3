@@ -28,9 +28,15 @@ import {
   listProjectServiceStates,
   setProjectServiceState,
 } from "../database/project_state.ts";
-import { listProjects } from "../database/projects.ts";
+import { listProjects, type Project } from "../database/projects.ts";
+import { type DaemonApiLifecycle, startDaemonApiServer } from "./daemon_api.ts";
 import { type DaemonMessage, startDaemonIpcServer } from "./daemon_ipc.ts";
-import { startProject, stopProject } from "./project.ts";
+import {
+  listProjectContainers,
+  restartProject,
+  startProject,
+  stopProject,
+} from "./project.ts";
 
 export type DaemonRunOptions = {
   signal?: AbortSignal;
@@ -53,6 +59,7 @@ export async function runDaemon(
   const lifecycleOperations = new Map<string, DaemonLifecycleOperation>();
 
   let ipcServer: { stop(): Promise<void> } | undefined;
+  let apiServer: { stop(): Promise<void> } | undefined;
   let statusChanges: { stop(): Promise<void> } | undefined;
   try {
     const startupProjects = await listDaemonProjects(db);
@@ -105,6 +112,25 @@ export async function runDaemon(
         message,
       );
     });
+    apiServer = startDaemonApiServer(
+      db,
+      commandOptions,
+      (project, action, lifecycleOptions) =>
+        runDaemonLifecycleOperation(
+          db,
+          commandOptions,
+          {
+            healthStatuses,
+            lifecycleOperations,
+            projects: startupProjects,
+            runHook,
+            serviceStatuses,
+          },
+          project,
+          action,
+          lifecycleOptions,
+        ),
+    );
     statusChanges = await watchProjectComposeStatusChanges(
       () => startupProjects,
       commandOptions,
@@ -156,6 +182,7 @@ export async function runDaemon(
     await (daemonOptions.wait ?? waitForDaemonStop)(signal);
   } finally {
     await statusChanges?.stop();
+    await apiServer?.stop();
     await ipcServer?.stop();
   }
 }
@@ -231,8 +258,178 @@ type ServiceStatusSnapshot = {
   serviceStatus: ProjectComposeServiceStatus | "";
 };
 
+type DaemonLifecycleContext = {
+  healthStatuses: Map<string, ProjectComposeHealthStatus>;
+  lifecycleOperations: Map<string, DaemonLifecycleOperation>;
+  projects: readonly DaemonProject[];
+  runHook: ComposeHookRunner;
+  serviceStatuses: Map<string, ProjectComposeServiceStatus>;
+};
+
+type ProjectHealthSnapshot = {
+  service: string;
+  status: "degraded" | "healthy" | "starting";
+};
+
+type ProjectStateSnapshot = {
+  service: string;
+  status: "started" | "starting" | "stopped" | "stopping";
+};
+
 function isEnabledProject(project: DaemonProject): project is EnabledProject {
   return project.enabled === 1;
+}
+
+async function runDaemonLifecycleOperation(
+  db: PM3Database,
+  commandOptions: RunCommandOptions,
+  context: DaemonLifecycleContext,
+  project: Project,
+  action: "restart" | "start" | "stop",
+  lifecycleOptions: Parameters<DaemonApiLifecycle>[2],
+): Promise<void> {
+  const stopState =
+    action === "stop"
+      ? await snapshotProjectState(
+          project,
+          commandOptions,
+          listProjectContainers,
+        )
+      : [];
+  await handleDaemonMessage(
+    db,
+    context.projects,
+    context.lifecycleOperations,
+    context.healthStatuses,
+    context.serviceStatuses,
+    context.runHook,
+    {
+      operation: action,
+      project: project.name,
+      projectId: project.id,
+      type: "lifecycle.begin",
+    },
+  );
+
+  try {
+    if (action === "start") {
+      await startProject(project, commandOptions, {
+        build: lifecycleOptions.build,
+        noCache: lifecycleOptions.noCache,
+      });
+    } else if (action === "restart") {
+      await restartProject(project, commandOptions, {
+        build: lifecycleOptions.build,
+        noCache: lifecycleOptions.noCache,
+      });
+    } else {
+      await stopProject(project, commandOptions);
+    }
+
+    await handleDaemonMessage(
+      db,
+      context.projects,
+      context.lifecycleOperations,
+      context.healthStatuses,
+      context.serviceStatuses,
+      context.runHook,
+      {
+        health:
+          action === "stop"
+            ? []
+            : await snapshotProjectHealth(
+                project,
+                commandOptions,
+                listProjectContainers,
+              ),
+        operation: action,
+        project: project.name,
+        projectId: project.id,
+        state:
+          action === "stop"
+            ? stopState
+            : await snapshotProjectState(
+                project,
+                commandOptions,
+                listProjectContainers,
+              ),
+        type: "lifecycle.end",
+      },
+    );
+  } catch (error) {
+    await handleDaemonMessage(
+      db,
+      context.projects,
+      context.lifecycleOperations,
+      context.healthStatuses,
+      context.serviceStatuses,
+      context.runHook,
+      {
+        operation: action,
+        project: project.name,
+        projectId: project.id,
+        type: "lifecycle.abort",
+      },
+    );
+    throw error;
+  }
+}
+
+async function snapshotProjectHealth(
+  project: Pick<DaemonProject, "name" | "workingDir">,
+  options: RunCommandOptions,
+  listContainers: typeof import("./project.ts").listProjectContainers,
+): Promise<ProjectHealthSnapshot[]> {
+  const containers = await listContainers(project, options);
+  return containers.flatMap((container) =>
+    container.service && container.healthStatus
+      ? [{ service: container.service, status: container.healthStatus }]
+      : [],
+  );
+}
+
+async function snapshotProjectState(
+  project: Pick<DaemonProject, "name" | "workingDir">,
+  options: RunCommandOptions,
+  listContainers: typeof import("./project.ts").listProjectContainers,
+): Promise<ProjectStateSnapshot[]> {
+  const containers = await listContainers(project, options);
+  const states = new Map<string, ProjectStateSnapshot["status"]>();
+
+  for (const container of containers) {
+    if (!container.service) {
+      continue;
+    }
+
+    states.set(
+      container.service,
+      combineProjectState(
+        states.get(container.service),
+        container.serviceStatus,
+      ),
+    );
+  }
+
+  return [...states].map(([service, status]) => ({ service, status }));
+}
+
+function combineProjectState(
+  current: ProjectStateSnapshot["status"] | undefined,
+  next: ProjectStateSnapshot["status"],
+): ProjectStateSnapshot["status"] {
+  if (current === "starting" || next === "starting") {
+    return "starting";
+  }
+
+  if (current === "stopping" || next === "stopping") {
+    return "stopping";
+  }
+
+  if (current === "started" || next === "started") {
+    return "started";
+  }
+
+  return "stopped";
 }
 
 async function loadComposeWatcherConfigs(
