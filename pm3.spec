@@ -1,5 +1,5 @@
 Name:           pm3
-Version:        3.0.0
+Version:        3.0.1
 Release:        1
 Summary:        Container project manager
 
@@ -51,6 +51,9 @@ install -Dm0644 %{SOURCE2} %{buildroot}%{_userunitdir}/pm3.service
 %{_userunitdir}/pm3.service
 
 %changelog
+* Fri May 08 2026 Artem Prokop <artem13.prokop@gmail.com> 3.0.1-1
+- fix:
+
 * Fri May 08 2026 Artem Prokop <artem13.prokop@gmail.com> 3.0.0-1
 - feat:
 
