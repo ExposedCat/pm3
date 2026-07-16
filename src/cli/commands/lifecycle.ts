@@ -20,7 +20,7 @@ type LifecycleCommand = CliCommand<LifecycleCommandKind> & {
 
 export const startCommand = createLifecycleCommand({
   kind: "start",
-  supportsBuild: true,
+  buildMode: "manual",
   description: "Start the project",
 });
 
@@ -31,13 +31,15 @@ export const stopCommand = createLifecycleCommand({
 
 export const restartCommand = createLifecycleCommand({
   kind: "restart",
-  supportsBuild: true,
+  buildMode: "default",
   description: "Restart the project",
 });
 
+type LifecycleBuildMode = "default" | "manual";
+
 type LifecycleCommandConfig = {
+  buildMode?: LifecycleBuildMode;
   kind: LifecycleCommandKind;
-  supportsBuild?: boolean;
   description: string;
 };
 
@@ -47,13 +49,22 @@ function createLifecycleCommand(
   return {
     names: [config.kind],
     args: ["NAME"],
-    options: [
-      "[-d|--detach]",
-      ...(config.supportsBuild ? ["[-b|--build]", "[-c|--no-cache]"] : []),
-    ],
+    options: ["[-d|--detach]", ...formatLifecycleBuildOptions(config)],
     description: config.description,
     parse: (args) => parseLifecycleArgs(config, args),
   };
+}
+
+function formatLifecycleBuildOptions(config: LifecycleCommandConfig): string[] {
+  if (config.buildMode === "manual") {
+    return ["[-b|--build]", "[-c|--no-cache]"];
+  }
+
+  if (config.buildMode === "default") {
+    return ["[-b|--no-build]", "[-c|--no-cache]"];
+  }
+
+  return [];
 }
 
 function parseLifecycleArgs(
@@ -61,9 +72,10 @@ function parseLifecycleArgs(
   args: string[],
 ): LifecycleCommand {
   let name: string | undefined;
-  let build = false;
+  let build = config.buildMode === "default";
   let detach = false;
   let noCache = false;
+  let noBuild = false;
 
   for (const arg of args) {
     if (arg === "-d" || arg === "--detach") {
@@ -71,15 +83,37 @@ function parseLifecycleArgs(
       continue;
     }
 
-    if (arg === "-b" || arg === "--build") {
+    if (arg === "-b") {
       assertLifecycleBuildOption(config, arg);
-      build = true;
+      if (config.buildMode === "default") {
+        build = false;
+        noBuild = true;
+      } else {
+        build = true;
+      }
+      continue;
+    }
+
+    if (arg === "--build") {
+      assertLifecycleBuildOption(config, arg);
+      if (config.buildMode === "manual") {
+        build = true;
+      }
+      continue;
+    }
+
+    if (arg === "--no-build") {
+      assertLifecycleDefaultBuildOption(config, arg);
+      build = false;
+      noBuild = true;
       continue;
     }
 
     if (arg === "-c" || arg === "--no-cache") {
       assertLifecycleBuildOption(config, arg);
-      build = true;
+      if (config.buildMode === "manual") {
+        build = true;
+      }
       noCache = true;
       continue;
     }
@@ -96,6 +130,9 @@ function parseLifecycleArgs(
   }
 
   const parsedName = requireArgument("project name", name);
+  if (noBuild && noCache) {
+    throw usageError(`Cannot use --no-cache with --no-build`);
+  }
 
   return {
     kind: config.kind,
@@ -115,7 +152,16 @@ function assertLifecycleBuildOption(
   config: LifecycleCommandConfig,
   option: string,
 ): void {
-  if (!config.supportsBuild) {
+  if (!config.buildMode) {
+    throw usageError(`Unknown option for ${config.kind}: ${option}`);
+  }
+}
+
+function assertLifecycleDefaultBuildOption(
+  config: LifecycleCommandConfig,
+  option: string,
+): void {
+  if (config.buildMode !== "default") {
     throw usageError(`Unknown option for ${config.kind}: ${option}`);
   }
 }
@@ -232,7 +278,8 @@ function createDetachedLifecycleArgs(
   return [
     ...(verbose ? ["--verbose"] : []),
     command.kind,
-    ...(command.build ? ["--build"] : []),
+    ...(command.kind === "start" && command.build ? ["--build"] : []),
+    ...(command.kind === "restart" && !command.build ? ["--no-build"] : []),
     ...(command.noCache ? ["--no-cache"] : []),
     command.name,
   ];

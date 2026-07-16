@@ -100,7 +100,7 @@ async function handleDaemonApiRequest(
     }
 
     const name = decodeURIComponent(match[1]);
-    const action = match[2];
+    const action = match[2] as ApiLifecycleAction | "show";
     const project = await getProjectByName(db, name);
     if (!project) {
       return jsonResponse(
@@ -118,8 +118,8 @@ async function handleDaemonApiRequest(
     const body = await readRequestBody(request);
     await runLifecycle(
       project,
-      action as ApiLifecycleAction,
-      readLifecycleRequestOptions(url, body),
+      action,
+      readLifecycleRequestOptions(action, url, body),
     );
 
     return jsonResponse({
@@ -226,11 +226,17 @@ function buildDaemonApiService(
 }
 
 function readLifecycleRequestOptions(
+  action: ApiLifecycleAction,
   url: URL,
   body: Record<string, unknown>,
 ): LifecycleRequestOptions {
+  const build = readOptionalRequestFlag(url.searchParams, body, ["build", "b"]);
+  const noBuild = readOptionalRequestFlag(url.searchParams, body, [
+    "noBuild",
+    "no-build",
+  ]);
   return {
-    build: readRequestFlag(url.searchParams, body, ["build", "b"]),
+    build: noBuild ? false : (build ?? action === "restart"),
     noCache: readRequestFlag(url.searchParams, body, [
       "noCache",
       "no-cache",
@@ -260,19 +266,34 @@ function readRequestFlag(
   body: Record<string, unknown>,
   names: readonly string[],
 ): boolean {
+  return readOptionalRequestFlag(searchParams, body, names) ?? false;
+}
+
+function readOptionalRequestFlag(
+  searchParams: URLSearchParams,
+  body: Record<string, unknown>,
+  names: readonly string[],
+): boolean | undefined {
   for (const name of names) {
     if (name in body) {
       return parseBooleanValue(body[name], name);
     }
   }
 
-  return readBooleanFlag(searchParams, names);
+  return readOptionalBooleanFlag(searchParams, names);
 }
 
 function readBooleanFlag(
   searchParams: URLSearchParams,
   names: readonly string[],
 ): boolean {
+  return readOptionalBooleanFlag(searchParams, names) ?? false;
+}
+
+function readOptionalBooleanFlag(
+  searchParams: URLSearchParams,
+  names: readonly string[],
+): boolean | undefined {
   for (const name of names) {
     const value = searchParams.get(name);
     if (value !== null) {
@@ -280,7 +301,7 @@ function readBooleanFlag(
     }
   }
 
-  return false;
+  return undefined;
 }
 
 function parseBooleanValue(value: unknown, name: string): boolean {

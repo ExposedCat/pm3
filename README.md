@@ -49,7 +49,7 @@ See [`Wiki`](https://github.com/ExposedCat/pm3/wiki) for full docs.
 
 ```sh
 pm3 start website
-pm3 restart website --build
+pm3 restart website
 pm3 stop website
 pm3 logs website api worker
 pm3 rm website
