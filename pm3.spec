@@ -1,5 +1,5 @@
 Name:           pm3
-Version:        3.0.1
+Version:        3.1.0
 Release:        1
 Summary:        Container project manager
 
@@ -51,6 +51,11 @@ install -Dm0644 %{SOURCE2} %{buildroot}%{_userunitdir}/pm3.service
 %{_userunitdir}/pm3.service
 
 %changelog
+* Thu Jul 16 2026 Artem Prokop <artem13.prokop@gmail.com> 3.1.0-1
+- feat: "all apps" operations
+- feat: add git-aware project lifecycle support
+- feat: build on restart by default
+
 * Fri May 08 2026 Artem Prokop <artem13.prokop@gmail.com> 3.0.1-1
 - fix:
 
