@@ -2,29 +2,33 @@ import type { Generated, Insertable, Selectable } from "kysely";
 import type { PM3Database } from "./database.ts";
 
 type ProjectEnabledValue = 0 | 1;
+type ProjectGitValue = 0 | 1;
 
 export type ProjectTable = {
   id: Generated<number>;
   name: string;
   workingDir: string;
   enabled: Generated<ProjectEnabledValue>;
+  git: Generated<ProjectGitValue>;
 };
 
 export type Project = Selectable<ProjectTable>;
 export type ProjectListItem = Pick<
   Project,
-  "id" | "name" | "workingDir" | "enabled"
+  "id" | "name" | "workingDir" | "enabled" | "git"
 >;
 
 const PROJECT_DISABLED = 0 as const;
 const PROJECT_ENABLED = 1 as const;
+const PROJECT_GIT_DISABLED = 0 as const;
+const PROJECT_GIT_ENABLED = 1 as const;
 
 export async function listProjects(
   db: PM3Database,
 ): Promise<ProjectListItem[]> {
   return await db
     .selectFrom("projects")
-    .select(["id", "name", "workingDir", "enabled"])
+    .select(["id", "name", "workingDir", "enabled", "git"])
     .orderBy("name", "asc")
     .execute();
 }
@@ -63,7 +67,9 @@ export async function getProjectByName(
 export type AddProjectInput = Pick<
   Insertable<ProjectTable>,
   "name" | "workingDir"
->;
+> & {
+  git?: boolean;
+};
 
 export async function addProject(
   db: PM3Database,
@@ -71,7 +77,11 @@ export async function addProject(
 ): Promise<Project> {
   const result = await db
     .insertInto("projects")
-    .values(input)
+    .values({
+      name: input.name,
+      workingDir: input.workingDir,
+      ...(input.git === undefined ? {} : { git: toProjectGitValue(input.git) }),
+    })
     .executeTakeFirst();
 
   const project = await getProjectDetails(db, Number(result.insertId));
@@ -103,6 +113,18 @@ export async function disableProject(
   await setProjectEnabled(db, id, PROJECT_DISABLED);
 }
 
+export async function setProjectGit(
+  db: PM3Database,
+  id: number,
+  git: boolean,
+): Promise<void> {
+  await db
+    .updateTable("projects")
+    .set({ git: toProjectGitValue(git) })
+    .where("id", "=", id)
+    .execute();
+}
+
 async function setProjectEnabled(
   db: PM3Database,
   id: number,
@@ -113,4 +135,8 @@ async function setProjectEnabled(
     .set({ enabled })
     .where("id", "=", id)
     .execute();
+}
+
+function toProjectGitValue(git: boolean): ProjectGitValue {
+  return git ? PROJECT_GIT_ENABLED : PROJECT_GIT_DISABLED;
 }

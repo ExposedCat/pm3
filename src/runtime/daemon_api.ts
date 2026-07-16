@@ -14,7 +14,10 @@ import { listProjectContainers, type ProjectStartOptions } from "./project.ts";
 const DAEMON_API_HOST = "127.0.0.1";
 const DAEMON_API_PORT = 46373;
 
-type LifecycleRequestOptions = Pick<ProjectStartOptions, "build" | "noCache">;
+type LifecycleRequestOptions = Pick<
+  ProjectStartOptions,
+  "build" | "git" | "noCache"
+>;
 type ApiLifecycleAction = "restart" | "start" | "stop";
 
 type ProjectListResponse = {
@@ -235,8 +238,15 @@ function readLifecycleRequestOptions(
     "noBuild",
     "no-build",
   ]);
+  const git = readOptionalRequestFlag(url.searchParams, body, ["git", "g"]);
+  const local = readOptionalRequestFlag(url.searchParams, body, ["local", "l"]);
+  if (git === true && local === true) {
+    throw inputError("Cannot use git with local");
+  }
+
   return {
     build: noBuild ? false : (build ?? action === "restart"),
+    git: local ? false : git,
     noCache: readRequestFlag(url.searchParams, body, [
       "noCache",
       "no-cache",
@@ -333,6 +343,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isInputError(error: Error): boolean {
   return (
+    error.message.startsWith("Cannot use ") ||
+    error.message.startsWith("Project is not a git repository: ") ||
     error.message.startsWith("Invalid boolean value for ") ||
     error.message.startsWith("Failed to list compose services for ")
   );

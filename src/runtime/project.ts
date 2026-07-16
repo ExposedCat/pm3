@@ -10,6 +10,7 @@ import {
 } from "../cli/runtime/compose.ts";
 
 type ProjectRuntime = {
+  git?: 0 | 1;
   name: string;
   workingDir: string;
 };
@@ -17,6 +18,7 @@ type ProjectRuntime = {
 export type ProjectStartOptions = {
   build?: boolean;
   detached?: boolean;
+  git?: boolean;
   noCache?: boolean;
   onHealthChange?: (change: ProjectComposeHealthChange) => void;
   trackHealth?: boolean;
@@ -27,6 +29,11 @@ export async function startProject(
   options: RunCommandOptions,
   startOptions: ProjectStartOptions = {},
 ): Promise<void> {
+  if (shouldPullProjectGit(project, startOptions.git)) {
+    const { pullProjectGit } = await import("./git.ts");
+    await pullProjectGit(project, options);
+  }
+
   if (startOptions.build) {
     await buildProject(project, options, {
       detached: startOptions.detached,
@@ -70,10 +77,15 @@ export async function restartProject(
   options: RunCommandOptions,
   restartOptions: ProjectRestartOptions = {},
 ): Promise<void> {
+  if (shouldPullProjectGit(project, restartOptions.git)) {
+    const { pullProjectGit } = await import("./git.ts");
+    await pullProjectGit(project, options);
+  }
+
   await stopProject(project, options, {
     detached: restartOptions.detached,
   });
-  await startProject(project, options, restartOptions);
+  await startProject(project, options, { ...restartOptions, git: false });
 }
 
 export async function listProjectContainers(
@@ -122,4 +134,11 @@ async function buildProject(
     options,
     { detached: buildOptions.detached },
   );
+}
+
+function shouldPullProjectGit(
+  project: ProjectRuntime,
+  gitOverride: boolean | undefined,
+): boolean {
+  return gitOverride ?? project.git === 1;
 }

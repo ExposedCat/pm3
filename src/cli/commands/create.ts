@@ -8,6 +8,7 @@ import { usageError } from "../errors.ts";
 import { requireArgument, requireOptionValue } from "../utils.ts";
 
 export type CreateCommand = CliCommand<"create"> & {
+  git?: boolean;
   workdir: string;
   name?: string;
 };
@@ -15,12 +16,13 @@ export type CreateCommand = CliCommand<"create"> & {
 export const createCommand = {
   names: ["create"],
   args: ["WORKDIR"],
-  options: ["[--name NAME]"],
+  options: ["[--name NAME]", "[-g|--git]", "[-l|--local]"],
   description: "Register project",
   parse: parseCreateArgs,
 } satisfies CommandDefinition<CreateCommand>;
 
 function parseCreateArgs(args: string[]): CreateCommand {
+  let git: boolean | undefined;
   let workdir: string | undefined;
   let name: string | undefined;
 
@@ -35,6 +37,16 @@ function parseCreateArgs(args: string[]): CreateCommand {
 
     if (arg.startsWith("--name=")) {
       name = requireOptionValue("--name", arg.slice("--name=".length));
+      continue;
+    }
+
+    if (arg === "-g" || arg === "--git") {
+      git = updateGitOption("create", git, true);
+      continue;
+    }
+
+    if (arg === "-l" || arg === "--local") {
+      git = updateGitOption("create", git, false);
       continue;
     }
 
@@ -53,15 +65,16 @@ function parseCreateArgs(args: string[]): CreateCommand {
 
   return {
     kind: "create",
+    git,
     workdir: parsedWorkdir,
     name,
     run: (options: RunCommandOptions) =>
-      runCreateCommand({ workdir: parsedWorkdir, name }, options),
+      runCreateCommand({ git, workdir: parsedWorkdir, name }, options),
   } satisfies CreateCommand;
 }
 
 async function runCreateCommand(
-  command: Pick<CreateCommand, "name" | "workdir">,
+  command: Pick<CreateCommand, "git" | "name" | "workdir">,
   options: RunCommandOptions,
 ): Promise<void> {
   const { addProject } = await import("../../database/projects.ts");
@@ -70,8 +83,27 @@ async function runCreateCommand(
   await withCliDatabase(options, async (db) => {
     const workingDir = resolve(command.workdir);
     const name = command.name ?? basename(workingDir);
-    await addProject(db, { name, workingDir });
+    if (command.git) {
+      const { requireProjectGitRepository } = await import(
+        "../../runtime/git.ts"
+      );
+      await requireProjectGitRepository({ name, workingDir }, options);
+    }
+
+    await addProject(db, { name, workingDir, git: command.git });
     console.log(`Created ${name} at ${workingDir}`);
     console.log(`Start with \`pm3 start ${name}\``);
   });
+}
+
+function updateGitOption(
+  command: string,
+  current: boolean | undefined,
+  next: boolean,
+): boolean {
+  if (current !== undefined && current !== next) {
+    throw usageError(`Cannot use --git with --local for ${command}`);
+  }
+
+  return next;
 }

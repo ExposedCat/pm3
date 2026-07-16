@@ -15,6 +15,7 @@ type LifecycleCommand = CliCommand<LifecycleCommandKind> & {
   name: string;
   build: boolean;
   detach: boolean;
+  git?: boolean;
   noCache: boolean;
 };
 
@@ -49,7 +50,11 @@ function createLifecycleCommand(
   return {
     names: [config.kind],
     args: ["NAME"],
-    options: ["[-d|--detach]", ...formatLifecycleBuildOptions(config)],
+    options: [
+      "[-d|--detach]",
+      ...formatLifecycleBuildOptions(config),
+      ...formatLifecycleGitOptions(config),
+    ],
     description: config.description,
     parse: (args) => parseLifecycleArgs(config, args),
   };
@@ -67,6 +72,10 @@ function formatLifecycleBuildOptions(config: LifecycleCommandConfig): string[] {
   return [];
 }
 
+function formatLifecycleGitOptions(config: LifecycleCommandConfig): string[] {
+  return config.buildMode ? ["[-g|--git]", "[-l|--local]"] : [];
+}
+
 function parseLifecycleArgs(
   config: LifecycleCommandConfig,
   args: string[],
@@ -74,6 +83,7 @@ function parseLifecycleArgs(
   let name: string | undefined;
   let build = config.buildMode === "default";
   let detach = false;
+  let git: boolean | undefined;
   let noCache = false;
   let noBuild = false;
 
@@ -118,6 +128,18 @@ function parseLifecycleArgs(
       continue;
     }
 
+    if (arg === "-g" || arg === "--git") {
+      assertLifecycleGitOption(config, arg);
+      git = updateGitOption(config.kind, git, true);
+      continue;
+    }
+
+    if (arg === "-l" || arg === "--local") {
+      assertLifecycleGitOption(config, arg);
+      git = updateGitOption(config.kind, git, false);
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       throw usageError(`Unknown option for ${config.kind}: ${arg}`);
     }
@@ -139,10 +161,11 @@ function parseLifecycleArgs(
     name: parsedName,
     build,
     detach,
+    git,
     noCache,
     run: (options) =>
       runLifecycleCommand(
-        { kind: config.kind, name: parsedName, build, detach, noCache },
+        { kind: config.kind, name: parsedName, build, detach, git, noCache },
         options,
       ),
   };
@@ -166,9 +189,30 @@ function assertLifecycleDefaultBuildOption(
   }
 }
 
+function assertLifecycleGitOption(
+  config: LifecycleCommandConfig,
+  option: string,
+): void {
+  if (!config.buildMode) {
+    throw usageError(`Unknown option for ${config.kind}: ${option}`);
+  }
+}
+
+function updateGitOption(
+  command: string,
+  current: boolean | undefined,
+  next: boolean,
+): boolean {
+  if (current !== undefined && current !== next) {
+    throw usageError(`Cannot use --git with --local for ${command}`);
+  }
+
+  return next;
+}
+
 type LifecycleRunCommand = Pick<
   LifecycleCommand,
-  "build" | "detach" | "kind" | "name" | "noCache"
+  "build" | "detach" | "git" | "kind" | "name" | "noCache"
 >;
 
 async function runLifecycleCommand(
@@ -200,12 +244,14 @@ async function runLifecycleCommand(
         await startProject(project, options, {
           build: command.build,
           detached: command.detach,
+          git: command.git,
           noCache: command.noCache,
         });
       } else if (command.kind === "restart") {
         await restartProject(project, options, {
           build: command.build,
           detached: command.detach,
+          git: command.git,
           noCache: command.noCache,
         });
       } else {
@@ -280,6 +326,8 @@ function createDetachedLifecycleArgs(
     command.kind,
     ...(command.kind === "start" && command.build ? ["--build"] : []),
     ...(command.kind === "restart" && !command.build ? ["--no-build"] : []),
+    ...(command.git === true ? ["--git"] : []),
+    ...(command.git === false ? ["--local"] : []),
     ...(command.noCache ? ["--no-cache"] : []),
     command.name,
   ];

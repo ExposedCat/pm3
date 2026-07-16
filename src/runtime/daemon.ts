@@ -315,11 +315,13 @@ async function runDaemonLifecycleOperation(
     if (action === "start") {
       await startProject(project, commandOptions, {
         build: lifecycleOptions.build,
+        git: lifecycleOptions.git,
         noCache: lifecycleOptions.noCache,
       });
     } else if (action === "restart") {
       await restartProject(project, commandOptions, {
         build: lifecycleOptions.build,
+        git: lifecycleOptions.git,
         noCache: lifecycleOptions.noCache,
       });
     } else {
