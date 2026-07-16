@@ -3,17 +3,17 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { withNamedProject } from "../commands.ts";
+import { withTargetProjects } from "../commands.ts";
 import { printProject } from "../output/project.ts";
-import { requireArgument, requireNoExtraArgs } from "../utils.ts";
+import { requireNoExtraArgs } from "../utils.ts";
 
 export type ViewCommand = CliCommand<"view"> & {
-  name: string;
+  name: string | undefined;
 };
 
 export const viewCommand = {
   names: ["view"],
-  args: ["NAME"],
+  args: ["[NAME]"],
   options: [],
   description: "Show the project",
   parse: parseViewArgs,
@@ -21,21 +21,26 @@ export const viewCommand = {
 
 function parseViewArgs(args: string[]): ViewCommand {
   const [nameArg, ...extra] = args;
-  const name = requireArgument("project name", nameArg);
   requireNoExtraArgs("view", extra);
 
   return {
     kind: "view",
-    name,
-    run: (options) => runViewCommand(name, options),
+    name: nameArg,
+    run: (options) => runViewCommand(nameArg, options),
   };
 }
 
 async function runViewCommand(
-  name: string,
+  name: string | undefined,
   options: RunCommandOptions,
 ): Promise<void> {
-  await withNamedProject(options, name, async (_db, project) => {
+  let firstProject = true;
+  await withTargetProjects(options, name, async (_db, project) => {
+    if (!firstProject) {
+      console.log("");
+    }
+    firstProject = false;
+
     printProject(project);
   });
 }

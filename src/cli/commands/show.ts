@@ -3,10 +3,10 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { withNamedProject } from "../commands.ts";
+import { withTargetProjects } from "../commands.ts";
 import { inputError } from "../errors.ts";
 import { green, red, underline, yellow } from "../output/color.ts";
-import { requireArgument, requireNoExtraArgs } from "../utils.ts";
+import { requireNoExtraArgs } from "../utils.ts";
 import {
   formatListCell,
   formatProjectState,
@@ -14,12 +14,12 @@ import {
 } from "./list.ts";
 
 export type ShowCommand = CliCommand<"show"> & {
-  name: string;
+  name: string | undefined;
 };
 
 export const showCommand = {
   names: ["show"],
-  args: ["PROJECT"],
+  args: ["[PROJECT]"],
   options: [],
   description: "Show project details per service",
   parse: parseShowArgs,
@@ -27,13 +27,12 @@ export const showCommand = {
 
 function parseShowArgs(args: string[]): ShowCommand {
   const [nameArg, ...extra] = args;
-  const name = requireArgument("project name", nameArg);
   requireNoExtraArgs("show", extra);
 
   return {
     kind: "show",
-    name,
-    run: (options) => runShowProjectCommand(name, options),
+    name: nameArg,
+    run: (options) => runShowProjectCommand(nameArg, options),
   };
 }
 
@@ -44,10 +43,11 @@ type ServiceRow = {
 };
 
 async function runShowProjectCommand(
-  name: string,
+  name: string | undefined,
   options: RunCommandOptions,
 ): Promise<void> {
-  await withNamedProject(options, name, async (_db, project) => {
+  let firstProject = true;
+  await withTargetProjects(options, name, async (_db, project) => {
     const { listProjectContainers } = await import("../../runtime/project.ts");
     const { listComposeServices } = await import("../runtime/compose_files.ts");
     const { runSystemProcess } = await import("../runtime/process.ts");
@@ -70,6 +70,11 @@ async function runShowProjectCommand(
       .sort((left, right) => left.localeCompare(right))
       .map((service) => buildServiceRow(service, containers));
     const projectState = formatProjectState(containers, { detailed: true });
+
+    if (!firstProject) {
+      console.log("");
+    }
+    firstProject = false;
 
     console.log(
       formatProjectDetails(

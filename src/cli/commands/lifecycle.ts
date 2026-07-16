@@ -5,14 +5,13 @@ import type {
   DetachedLifecycleLaunch,
   RunCommandOptions,
 } from "../commands.ts";
-import { withNamedProject } from "../commands.ts";
+import { withTargetProjectList } from "../commands.ts";
 import { usageError } from "../errors.ts";
-import { requireArgument } from "../utils.ts";
 
 type LifecycleCommandKind = "start" | "stop" | "restart";
 
 type LifecycleCommand = CliCommand<LifecycleCommandKind> & {
-  name: string;
+  name: string | undefined;
   build: boolean;
   detach: boolean;
   git?: boolean;
@@ -49,7 +48,7 @@ function createLifecycleCommand(
 ): CommandDefinition<LifecycleCommand> {
   return {
     names: [config.kind],
-    args: ["NAME"],
+    args: ["[NAME]"],
     options: [
       "[-d|--detach]",
       ...formatLifecycleBuildOptions(config),
@@ -151,21 +150,20 @@ function parseLifecycleArgs(
     name = arg;
   }
 
-  const parsedName = requireArgument("project name", name);
   if (noBuild && noCache) {
     throw usageError(`Cannot use --no-cache with --no-build`);
   }
 
   return {
     kind: config.kind,
-    name: parsedName,
+    name,
     build,
     detach,
     git,
     noCache,
     run: (options) =>
       runLifecycleCommand(
-        { kind: config.kind, name: parsedName, build, detach, git, noCache },
+        { kind: config.kind, name, build, detach, git, noCache },
         options,
       ),
   };
@@ -219,81 +217,124 @@ async function runLifecycleCommand(
   command: LifecycleRunCommand,
   options: RunCommandOptions,
 ): Promise<void> {
-  await withNamedProject(options, command.name, async (_db, project) => {
-    if (command.detach) {
-      await launchDetachedLifecycle(command, options);
-      return;
-    }
-
-    const { notifyDaemon } = await import("../../runtime/daemon_ipc.ts");
-    const { listProjectContainers, restartProject, startProject, stopProject } =
-      await import("../../runtime/project.ts");
-    const stopState =
-      command.kind === "stop"
-        ? await snapshotProjectState(project, options, listProjectContainers)
-        : [];
-    await notifyDaemon({
-      type: "lifecycle.begin",
-      projectId: project.id,
-      project: project.name,
-      operation: command.kind,
-    });
-
-    try {
-      if (command.kind === "start") {
-        await startProject(project, options, {
-          build: command.build,
-          detached: command.detach,
-          git: command.git,
-          noCache: command.noCache,
-        });
-      } else if (command.kind === "restart") {
-        await restartProject(project, options, {
-          build: command.build,
-          detached: command.detach,
-          git: command.git,
-          noCache: command.noCache,
-        });
-      } else {
-        await stopProject(project, options, { detached: command.detach });
-      }
-
-      await notifyDaemon({
-        type: "lifecycle.end",
-        projectId: project.id,
-        project: project.name,
-        operation: command.kind,
-        health:
-          command.kind === "stop"
-            ? []
-            : await snapshotProjectHealth(
-                project,
-                options,
-                listProjectContainers,
-              ),
-        state:
-          command.kind === "stop"
-            ? stopState
-            : await snapshotProjectState(
-                project,
-                options,
-                listProjectContainers,
-              ),
-      });
-    } catch (error) {
-      await notifyDaemon({
-        type: "lifecycle.abort",
-        projectId: project.id,
-        project: project.name,
-        operation: command.kind,
-      });
-      throw error;
+  await withTargetProjectList(options, command.name, async (_db, projects) => {
+    const gitPulled = await pullBulkLifecycleGit(command, projects, options);
+    for (const project of projects) {
+      await runProjectLifecycle(command, project, options, { gitPulled });
     }
   });
 }
 
-async function launchDetachedLifecycle(
+type LifecycleTargetProject = {
+  git?: 0 | 1;
+  id: number;
+  name: string;
+  workingDir: string;
+};
+
+async function pullBulkLifecycleGit(
   command: LifecycleRunCommand,
+  projects: readonly LifecycleTargetProject[],
+  options: RunCommandOptions,
+): Promise<boolean> {
+  if (
+    command.name ||
+    command.detach ||
+    command.kind === "stop" ||
+    projects.length < 2
+  ) {
+    return false;
+  }
+
+  const gitProjects = projects.filter((project) => command.git ?? project.git);
+  if (gitProjects.length === 0) {
+    return false;
+  }
+
+  const { pullProjectGit } = await import("../../runtime/git.ts");
+  for (const project of gitProjects) {
+    await pullProjectGit(project, options);
+  }
+
+  return true;
+}
+
+async function runProjectLifecycle(
+  command: LifecycleRunCommand,
+  project: LifecycleTargetProject,
+  options: RunCommandOptions,
+  runOptions: { gitPulled: boolean },
+): Promise<void> {
+  const targetCommand = { ...command, name: project.name };
+  if (command.detach) {
+    await launchDetachedLifecycle(targetCommand, options);
+    return;
+  }
+
+  const { notifyDaemon } = await import("../../runtime/daemon_ipc.ts");
+  const { listProjectContainers, restartProject, startProject, stopProject } =
+    await import("../../runtime/project.ts");
+  const stopState =
+    command.kind === "stop"
+      ? await snapshotProjectState(project, options, listProjectContainers)
+      : [];
+  await notifyDaemon({
+    type: "lifecycle.begin",
+    projectId: project.id,
+    project: project.name,
+    operation: command.kind,
+  });
+
+  try {
+    if (command.kind === "start") {
+      await startProject(project, options, {
+        build: command.build,
+        detached: command.detach,
+        git: runOptions.gitPulled ? false : command.git,
+        noCache: command.noCache,
+      });
+    } else if (command.kind === "restart") {
+      await restartProject(project, options, {
+        build: command.build,
+        detached: command.detach,
+        git: runOptions.gitPulled ? false : command.git,
+        noCache: command.noCache,
+      });
+    } else {
+      await stopProject(project, options, { detached: command.detach });
+    }
+
+    await notifyDaemon({
+      type: "lifecycle.end",
+      projectId: project.id,
+      project: project.name,
+      operation: command.kind,
+      health:
+        command.kind === "stop"
+          ? []
+          : await snapshotProjectHealth(
+              project,
+              options,
+              listProjectContainers,
+            ),
+      state:
+        command.kind === "stop"
+          ? stopState
+          : await snapshotProjectState(project, options, listProjectContainers),
+    });
+  } catch (error) {
+    await notifyDaemon({
+      type: "lifecycle.abort",
+      projectId: project.id,
+      project: project.name,
+      operation: command.kind,
+    });
+    throw error;
+  }
+}
+
+async function launchDetachedLifecycle(
+  command: LifecycleRunTargetCommand,
   options: RunCommandOptions,
 ): Promise<void> {
   const launch = {
@@ -318,7 +359,7 @@ async function launchDetachedLifecycle(
 }
 
 function createDetachedLifecycleArgs(
-  command: LifecycleRunCommand,
+  command: LifecycleRunTargetCommand,
   verbose: boolean,
 ): string[] {
   return [
@@ -332,6 +373,10 @@ function createDetachedLifecycleArgs(
     command.name,
   ];
 }
+
+type LifecycleRunTargetCommand = Omit<LifecycleRunCommand, "name"> & {
+  name: string;
+};
 
 function createDetachedLifecycleEnv(
   options: RunCommandOptions,

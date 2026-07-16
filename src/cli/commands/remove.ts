@@ -3,18 +3,17 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { withNamedProject } from "../commands.ts";
+import { withTargetProjectList } from "../commands.ts";
 import { inputError, usageError } from "../errors.ts";
-import { requireArgument } from "../utils.ts";
 
 export type RemoveCommand = CliCommand<"remove"> & {
-  name: string;
+  name: string | undefined;
   force: boolean;
 };
 
 export const removeCommand = {
   names: ["rm", "remove"],
-  args: ["NAME"],
+  args: ["[NAME]"],
   options: ["[-f|--force]"],
   description: "Remove the project and its Podman artifacts",
   parse: parseRemoveArgs,
@@ -41,13 +40,11 @@ function parseRemoveArgs(args: string[]): RemoveCommand {
     name = arg;
   }
 
-  const parsedName = requireArgument("project name", name);
-
   return {
     kind: "remove",
-    name: parsedName,
+    name,
     force,
-    run: (options) => runRemoveCommand({ name: parsedName, force }, options),
+    run: (options) => runRemoveCommand({ name, force }, options),
   };
 }
 
@@ -62,19 +59,23 @@ async function runRemoveCommand(
     "../../runtime/project.ts"
   );
 
-  await withNamedProject(
+  await withTargetProjectList(
     options,
     command.name,
-    async (db, project) => {
-      const containers = await listProjectContainers(project, options);
-      if (!command.force && hasRunningContainer(containers)) {
-        throw inputError(
-          `Failed to remove project: "${command.name}" is running`,
-        );
+    async (db, projects) => {
+      for (const project of projects) {
+        const containers = await listProjectContainers(project, options);
+        if (!command.force && hasRunningContainer(containers)) {
+          throw inputError(
+            `Failed to remove project: "${project.name}" is running`,
+          );
+        }
       }
 
-      await removeProjectArtifacts(project, options);
-      await deleteProject(db, project.id);
+      for (const project of projects) {
+        await removeProjectArtifacts(project, options);
+        await deleteProject(db, project.id);
+      }
     },
     (name) => `Failed to remove project: "${name}" not found`,
   );

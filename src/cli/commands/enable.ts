@@ -3,19 +3,18 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { withNamedProject } from "../commands.ts";
+import { withTargetProjectList } from "../commands.ts";
 import { usageError } from "../errors.ts";
-import { requireArgument } from "../utils.ts";
 
 export type EnableCommand = CliCommand<"enable"> & {
   git?: boolean;
-  name: string;
+  name: string | undefined;
   now: boolean;
 };
 
 export const enableCommand = {
   names: ["enable"],
-  args: ["NAME"],
+  args: ["[NAME]"],
   options: ["[-n|--now]", "[-g|--git]", "[-l|--local]"],
   description: "Enable project startup",
   parse: parseEnableArgs,
@@ -53,14 +52,12 @@ function parseEnableArgs(args: string[]): EnableCommand {
     name = arg;
   }
 
-  const parsedName = requireArgument("project name", name);
-
   return {
     kind: "enable",
     git,
-    name: parsedName,
+    name,
     now,
-    run: (options) => runEnableCommand({ git, name: parsedName, now }, options),
+    run: (options) => runEnableCommand({ git, name, now }, options),
   };
 }
 
@@ -73,22 +70,26 @@ async function runEnableCommand(
   );
   const { startProject } = await import("../../runtime/project.ts");
 
-  await withNamedProject(options, command.name, async (db, project) => {
+  await withTargetProjectList(options, command.name, async (db, projects) => {
     if (command.git) {
       const { requireProjectGitRepository } = await import(
         "../../runtime/git.ts"
       );
-      await requireProjectGitRepository(project, options);
+      for (const project of projects) {
+        await requireProjectGitRepository(project, options);
+      }
     }
 
-    await enableProject(db, project.id);
-    if (command.git !== undefined) {
-      await setProjectGit(db, project.id, command.git);
-    }
-    console.log(`Enabled ${project.name}`);
+    for (const project of projects) {
+      await enableProject(db, project.id);
+      if (command.git !== undefined) {
+        await setProjectGit(db, project.id, command.git);
+      }
+      console.log(`Enabled ${project.name}`);
 
-    if (command.now) {
-      await startProject(project, options, { git: command.git });
+      if (command.now) {
+        await startProject(project, options, { git: command.git });
+      }
     }
   });
 }

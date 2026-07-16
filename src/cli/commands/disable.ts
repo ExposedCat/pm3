@@ -3,18 +3,17 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { withNamedProject } from "../commands.ts";
+import { withTargetProjects } from "../commands.ts";
 import { usageError } from "../errors.ts";
-import { requireArgument } from "../utils.ts";
 
 export type DisableCommand = CliCommand<"disable"> & {
-  name: string;
+  name: string | undefined;
   now: boolean;
 };
 
 export const disableCommand = {
   names: ["disable"],
-  args: ["NAME"],
+  args: ["[NAME]"],
   options: ["[-n|--now]"],
   description: "Disable project startup",
   parse: parseDisableArgs,
@@ -41,13 +40,11 @@ function parseDisableArgs(args: string[]): DisableCommand {
     name = arg;
   }
 
-  const parsedName = requireArgument("project name", name);
-
   return {
     kind: "disable",
-    name: parsedName,
+    name,
     now,
-    run: (options) => runDisableCommand({ name: parsedName, now }, options),
+    run: (options) => runDisableCommand({ name, now }, options),
   };
 }
 
@@ -58,7 +55,7 @@ async function runDisableCommand(
   const { disableProject } = await import("../../database/projects.ts");
   const { stopProject } = await import("../../runtime/project.ts");
 
-  await withNamedProject(options, command.name, async (db, project) => {
+  await withTargetProjects(options, command.name, async (db, project) => {
     await disableProject(db, project.id);
     console.log(`Disabled ${project.name}`);
 

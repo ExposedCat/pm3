@@ -3,12 +3,12 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { withNamedProject } from "../commands.ts";
+import { withTargetProjectList } from "../commands.ts";
 import { usageError } from "../errors.ts";
-import { requireArgument, requireOptionValue } from "../utils.ts";
+import { requireOptionValue } from "../utils.ts";
 
 export type LogsCommand = CliCommand<"logs"> & {
-  name: string;
+  name: string | undefined;
   services: string[];
   since: string | undefined;
   lines: number | undefined;
@@ -18,7 +18,7 @@ export type LogsCommand = CliCommand<"logs"> & {
 
 export const logsCommand = {
   names: ["logs"],
-  args: ["NAME", "[SERVICES...]"],
+  args: ["[NAME]", "[SERVICES...]"],
   options: [
     "[-s|--since VALUE]",
     "[-l|--lines COUNT]",
@@ -74,11 +74,9 @@ function parseLogsArgs(args: string[]): LogsCommand {
     services.push(arg);
   }
 
-  const parsedName = requireArgument("project name", name);
-
   return {
     kind: "logs",
-    name: parsedName,
+    name,
     services,
     since,
     lines,
@@ -87,7 +85,7 @@ function parseLogsArgs(args: string[]): LogsCommand {
     run: (options) =>
       runLogsCommand(
         {
-          name: parsedName,
+          name,
           services,
           since,
           lines,
@@ -119,7 +117,9 @@ async function runLogsCommand(
 ): Promise<void> {
   const { streamProjectLogs } = await import("../../runtime/project.ts");
 
-  await withNamedProject(options, command.name, async (_db, project) => {
-    await streamProjectLogs(project, command, options);
+  await withTargetProjectList(options, command.name, async (_db, projects) => {
+    await Promise.all(
+      projects.map((project) => streamProjectLogs(project, command, options)),
+    );
   });
 }

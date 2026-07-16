@@ -121,6 +121,62 @@ export async function withNamedProject<T>(
   });
 }
 
+export async function withTargetProjects<T>(
+  options: RunCommandOptions,
+  name: string | undefined,
+  callback: (db: PM3Database, project: Project) => Promise<T>,
+  missingMessage?: MissingProjectMessage,
+): Promise<T[]> {
+  return await withTargetProjectList(
+    options,
+    name,
+    async (db, projects) => {
+      const results: T[] = [];
+      for (const project of projects) {
+        results.push(await callback(db, project));
+      }
+
+      return results;
+    },
+    missingMessage,
+  );
+}
+
+export async function withTargetProjectList<T>(
+  options: RunCommandOptions,
+  name: string | undefined,
+  callback: (db: PM3Database, projects: readonly Project[]) => Promise<T>,
+  missingMessage: MissingProjectMessage = (projectName) =>
+    `Project not found: ${projectName}`,
+): Promise<T> {
+  const { getProjectByName, listProjects } = await import(
+    "../database/projects.ts"
+  );
+  const { withCliDatabase } = await import("./runtime/database.ts");
+
+  return await withCliDatabase(options, async (db) => {
+    if (name) {
+      const project = await getProjectByName(db, name);
+      if (!project) {
+        throw inputError(
+          typeof missingMessage === "function"
+            ? missingMessage(name)
+            : missingMessage,
+        );
+      }
+
+      return await callback(db, [project]);
+    }
+
+    const projects = await listProjects(db);
+    if (projects.length === 0) {
+      throw inputError("No projects registered.");
+    }
+
+    return await callback(db, projects);
+  });
+}
+
 type GlobalOptionsResult = {
   commandArgs: string[];
   verbose: boolean;
