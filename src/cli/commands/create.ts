@@ -4,10 +4,11 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { usageError } from "../errors.ts";
+import { inputError, usageError } from "../errors.ts";
 import { requireArgument, requireOptionValue } from "../utils.ts";
 
 export type CreateCommand = CliCommand<"create"> & {
+  composeFile?: string;
   git?: boolean;
   workdir: string;
   name?: string;
@@ -16,12 +17,18 @@ export type CreateCommand = CliCommand<"create"> & {
 export const createCommand = {
   names: ["create"],
   args: ["WORKDIR"],
-  options: ["[--name NAME]", "[-g|--git]", "[-l|--local]"],
+  options: [
+    "[--name NAME]",
+    "[-c|--compose COMPOSE]",
+    "[-g|--git]",
+    "[-l|--local]",
+  ],
   description: "Register project",
   parse: parseCreateArgs,
 } satisfies CommandDefinition<CreateCommand>;
 
 function parseCreateArgs(args: string[]): CreateCommand {
+  let composeFile: string | undefined;
   let git: boolean | undefined;
   let workdir: string | undefined;
   let name: string | undefined;
@@ -37,6 +44,20 @@ function parseCreateArgs(args: string[]): CreateCommand {
 
     if (arg.startsWith("--name=")) {
       name = requireOptionValue("--name", arg.slice("--name=".length));
+      continue;
+    }
+
+    if (arg === "-c" || arg === "--compose") {
+      composeFile = requireOptionValue(arg, args[index + 1]);
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--compose=")) {
+      composeFile = requireOptionValue(
+        "--compose",
+        arg.slice("--compose=".length),
+      );
       continue;
     }
 
@@ -65,16 +86,20 @@ function parseCreateArgs(args: string[]): CreateCommand {
 
   return {
     kind: "create",
+    composeFile,
     git,
     workdir: parsedWorkdir,
     name,
     run: (options: RunCommandOptions) =>
-      runCreateCommand({ git, workdir: parsedWorkdir, name }, options),
+      runCreateCommand(
+        { composeFile, git, workdir: parsedWorkdir, name },
+        options,
+      ),
   } satisfies CreateCommand;
 }
 
 async function runCreateCommand(
-  command: Pick<CreateCommand, "git" | "name" | "workdir">,
+  command: Pick<CreateCommand, "composeFile" | "git" | "name" | "workdir">,
   options: RunCommandOptions,
 ): Promise<void> {
   const { addProject } = await import("../../database/projects.ts");
@@ -82,6 +107,7 @@ async function runCreateCommand(
 
   await withCliDatabase(options, async (db) => {
     const workingDir = resolve(command.workdir);
+    const composeFile = await resolveCreateComposeFile(command.composeFile);
     const name = command.name ?? basename(workingDir);
     if (command.git) {
       const { requireProjectGitRepository } = await import(
@@ -90,10 +116,38 @@ async function runCreateCommand(
       await requireProjectGitRepository({ name, workingDir }, options);
     }
 
-    await addProject(db, { name, workingDir, git: command.git });
+    await addProject(db, { name, workingDir, composeFile, git: command.git });
     console.log(`Created ${name} at ${workingDir}`);
+    if (composeFile) {
+      console.log(`Compose file: ${composeFile}`);
+    }
     console.log(`Start with \`pm3 start ${name}\``);
   });
+}
+
+async function resolveCreateComposeFile(
+  path: string | undefined,
+): Promise<string | undefined> {
+  if (!path) {
+    return undefined;
+  }
+
+  const composeFile = resolve(path);
+
+  try {
+    const stat = await Deno.stat(composeFile);
+    if (!stat.isFile) {
+      throw inputError(`Compose path is not a file: ${composeFile}`);
+    }
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      throw inputError(`Compose file not found: ${composeFile}`);
+    }
+
+    throw error;
+  }
+
+  return composeFile;
 }
 
 function updateGitOption(

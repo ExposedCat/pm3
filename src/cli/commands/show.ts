@@ -80,6 +80,7 @@ async function runShowProjectCommand(
       formatProjectDetails(
         project.name,
         project.workingDir,
+        project.composeFile,
         project.enabled,
         projectState,
       ),
@@ -111,6 +112,7 @@ function buildServiceRow(
 function formatProjectDetails(
   name: string,
   workingDir: string,
+  composeFile: string | null,
   enabled: 0 | 1,
   projectState: ReturnType<typeof formatProjectState>,
 ): string {
@@ -123,6 +125,7 @@ function formatProjectDetails(
       [
         ["Startup", formatStartupValue(startup)],
         ["Workdir", underline(workingDir)],
+        ...(composeFile ? [["Compose", underline(composeFile)] as const] : []),
       ],
       4,
     ),

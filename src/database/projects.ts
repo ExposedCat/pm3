@@ -5,6 +5,7 @@ type ProjectEnabledValue = 0 | 1;
 type ProjectGitValue = 0 | 1;
 
 export type ProjectTable = {
+  composeFile: string | null;
   id: Generated<number>;
   name: string;
   workingDir: string;
@@ -15,7 +16,7 @@ export type ProjectTable = {
 export type Project = Selectable<ProjectTable>;
 export type ProjectListItem = Pick<
   Project,
-  "id" | "name" | "workingDir" | "enabled" | "git"
+  "composeFile" | "id" | "name" | "workingDir" | "enabled" | "git"
 >;
 
 const PROJECT_DISABLED = 0 as const;
@@ -28,7 +29,7 @@ export async function listProjects(
 ): Promise<ProjectListItem[]> {
   return await db
     .selectFrom("projects")
-    .select(["id", "name", "workingDir", "enabled", "git"])
+    .select(["composeFile", "id", "name", "workingDir", "enabled", "git"])
     .orderBy("name", "asc")
     .execute();
 }
@@ -68,6 +69,7 @@ export type AddProjectInput = Pick<
   Insertable<ProjectTable>,
   "name" | "workingDir"
 > & {
+  composeFile?: string;
   git?: boolean;
 };
 
@@ -80,6 +82,9 @@ export async function addProject(
     .values({
       name: input.name,
       workingDir: input.workingDir,
+      ...(input.composeFile === undefined
+        ? {}
+        : { composeFile: input.composeFile }),
       ...(input.git === undefined ? {} : { git: toProjectGitValue(input.git) }),
     })
     .executeTakeFirst();

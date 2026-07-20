@@ -11,6 +11,7 @@ import {
   parsePodmanEvent,
 } from "./compose_events.ts";
 import {
+  createPodmanComposeArgs,
   listComposeServices,
   PODMAN_COMMAND,
   PODMAN_COMPOSE_COMMAND,
@@ -28,6 +29,7 @@ const INFINITE_RETRY_ATTEMPTS = 3;
 const HEALTH_STATUS_POLL_INTERVAL_MS = 1_000;
 
 type ComposeProject = {
+  composeFile?: string | null;
   name: string;
   workingDir: string;
 };
@@ -928,7 +930,7 @@ async function readCurrentComposeHealthStatuses(
 ): Promise<Map<string, "starting" | "healthy" | "degraded">> {
   const result = await runProcess({
     command: PODMAN_COMPOSE_COMMAND,
-    args: ["ps", "--format", "json"],
+    args: createPodmanComposeArgs(project, ["ps", "--format", "json"]),
     cwd: project.workingDir,
     captureOutput: true,
   });

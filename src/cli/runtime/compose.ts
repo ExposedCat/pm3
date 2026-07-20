@@ -14,6 +14,7 @@ import {
   parsePodmanEvent,
 } from "./compose_events.ts";
 import {
+  createPodmanComposeArgs,
   hasComposeFile,
   PODMAN_COMMAND,
   PODMAN_COMPOSE_COMMAND,
@@ -50,6 +51,7 @@ type ProjectComposeStatusEvent = {
 export const STOP_COMPOSE_ARGS = ["down", "--remove-orphans"] as const;
 
 type ComposeProject = {
+  composeFile?: string | null;
   name: string;
   workingDir: string;
 };
@@ -171,7 +173,7 @@ export async function removeProjectComposeArtifacts(
   options: RunCommandOptions,
   runOptions: ProjectComposeRunOptions = {},
 ): Promise<void> {
-  if (!(await hasComposeFile(project.workingDir))) {
+  if (!(await hasComposeFile(project))) {
     return;
   }
 
@@ -247,7 +249,7 @@ async function resolveProjectLogTargets(
   logsOptions: ProjectComposeLogsOptions,
   options: RunCommandOptions,
 ): Promise<ComposeLogTarget[]> {
-  if (!(await hasComposeFile(project.workingDir))) {
+  if (!(await hasComposeFile(project))) {
     throw inputError(`Compose file not found for project: ${project.name}`);
   }
 
@@ -789,7 +791,7 @@ export async function listProjectComposeContainers(
   project: ComposeProject,
   options: RunCommandOptions,
 ): Promise<ProjectComposeContainer[]> {
-  if (!(await hasComposeFile(project.workingDir))) {
+  if (!(await hasComposeFile(project))) {
     return [];
   }
 
@@ -797,7 +799,7 @@ export async function listProjectComposeContainers(
   const runProcess = options.runProcess ?? runSystemProcess;
   const result = await runProcess({
     command: PODMAN_COMPOSE_COMMAND,
-    args: ["ps", "--format", "json"],
+    args: createPodmanComposeArgs(project, ["ps", "--format", "json"]),
     cwd: project.workingDir,
     captureOutput: true,
   });
@@ -1020,7 +1022,9 @@ async function runComposeCommand(
 
     const command: ProcessCommand = {
       command: PODMAN_COMPOSE_COMMAND,
-      args: progress.captureComposeCommands ? ["--verbose", ...args] : args,
+      args: progress.captureComposeCommands
+        ? ["--verbose", ...createPodmanComposeArgs(project, args)]
+        : createPodmanComposeArgs(project, args),
       cwd: project.workingDir,
       detached: runOptions.detached,
     };

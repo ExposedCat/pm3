@@ -12,24 +12,8 @@ const PODMAN_COMPOSE_FILES = [
   "docker-compose.yml",
 ];
 
-export async function hasComposeFile(workingDir: string): Promise<boolean> {
-  for (const fileName of PODMAN_COMPOSE_FILES) {
-    try {
-      const stat = await Deno.stat(`${workingDir}/${fileName}`);
-      if (stat.isFile) {
-        return true;
-      }
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) {
-        throw error;
-      }
-    }
-  }
-
-  return false;
-}
-
 type ComposeProject = {
+  composeFile?: string | null;
   workingDir: string;
 };
 
@@ -43,19 +27,32 @@ export type ComposeConfigDiscovery =
   | { kind: "config"; text: string }
   | { kind: "error"; message: string };
 
+export async function hasComposeFile(
+  project: ComposeProject,
+): Promise<boolean> {
+  return (await resolveComposeFile(project)) !== undefined;
+}
+
+export function createPodmanComposeArgs(
+  project: ComposeProject,
+  args: readonly string[],
+): string[] {
+  return project.composeFile ? ["-f", project.composeFile, ...args] : [...args];
+}
+
 export async function listComposeServices(
   project: ComposeProject,
   runProcess: (
     command: ProcessCommand,
   ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
 ): Promise<ComposeServiceDiscovery> {
-  if (!(await hasComposeFile(project.workingDir))) {
+  if (!(await hasComposeFile(project))) {
     return { kind: "missing-compose-file" };
   }
 
   const result = await runProcess({
     command: PODMAN_COMPOSE_COMMAND,
-    args: ["config", "--services"],
+    args: createPodmanComposeArgs(project, ["config", "--services"]),
     cwd: project.workingDir,
     captureOutput: true,
   });
@@ -85,13 +82,13 @@ export async function readComposeConfig(
     command: ProcessCommand,
   ) => Promise<{ code: number; stdout?: string; stderr?: string }>,
 ): Promise<ComposeConfigDiscovery> {
-  if (!(await hasComposeFile(project.workingDir))) {
+  if (!(await hasComposeFile(project))) {
     return { kind: "missing-compose-file" };
   }
 
   const result = await runProcess({
     command: PODMAN_COMPOSE_COMMAND,
-    args: ["config"],
+    args: createPodmanComposeArgs(project, ["config"]),
     cwd: project.workingDir,
     captureOutput: true,
   });
@@ -110,4 +107,35 @@ export async function readComposeConfig(
     kind: "config",
     text: result.stdout ?? "",
   };
+}
+
+async function resolveComposeFile(
+  project: ComposeProject,
+): Promise<string | undefined> {
+  if (project.composeFile) {
+    return (await isFile(project.composeFile))
+      ? project.composeFile
+      : undefined;
+  }
+
+  for (const fileName of PODMAN_COMPOSE_FILES) {
+    const path = `${project.workingDir}/${fileName}`;
+    if (await isFile(path)) {
+      return path;
+    }
+  }
+
+  return undefined;
+}
+
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isFile;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return false;
+    }
+
+    throw error;
+  }
 }

@@ -31,12 +31,13 @@ policy and hooks keep working after boot.
 - `podman-compose`
 - a compose file in the project directory: `podman-compose.yaml`,
   `podman-compose.yml`, `compose.yaml`, `compose.yml`, `docker-compose.yaml`, or
-  `docker-compose.yml`
+  `docker-compose.yml`; use `pm3 create --compose` for a different file
 
 ## Quick Start
 
 ```sh
 pm3 create ./apps/web --name website
+pm3 create ./apps/api --name api --compose ./apps/api/compose.prod.yaml
 pm3 enable website --now
 pm3 list --detailed
 ```
