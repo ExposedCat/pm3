@@ -1,5 +1,5 @@
 Name:           pm3
-Version:        3.1.0
+Version:        3.2.0
 Release:        1
 Summary:        Container project manager
 
@@ -51,6 +51,9 @@ install -Dm0644 %{SOURCE2} %{buildroot}%{_userunitdir}/pm3.service
 %{_userunitdir}/pm3.service
 
 %changelog
+* Mon Jul 20 2026 Artem Prokop <artem13.prokop@gmail.com> 3.2.0-1
+- feat: support custom compose file on create
+
 * Thu Jul 16 2026 Artem Prokop <artem13.prokop@gmail.com> 3.1.0-1
 - feat: "all apps" operations
 - feat: add git-aware project lifecycle support
