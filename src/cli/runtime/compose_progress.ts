@@ -680,8 +680,26 @@ function findServiceInComposeLine(
   );
 }
 
-function isComposeNoticeLine(line: string): boolean {
+export function isComposeNoticeLine(line: string): boolean {
+  const level = parseComposeLogLevel(line);
+  if (level) {
+    return /^(?:err(?:or)?|warn(?:ing)?|critical|fatal|panic)$/.test(level);
+  }
+
   return /\b(?:err(?:or)?|warn(?:ing)?)\b/i.test(line);
+}
+
+function parseComposeLogLevel(line: string): string | undefined {
+  const loggerPrefix =
+    /^\s*(trace|debug|info|warn(?:ing)?|err(?:or)?|critical|fatal|panic):/i.exec(
+      line,
+    );
+  if (loggerPrefix) {
+    return loggerPrefix[1].toLowerCase();
+  }
+
+  const logfmtLevel = /\blevel=["']?([a-z]+)(?:["']|\b)/i.exec(line);
+  return logfmtLevel?.[1].toLowerCase();
 }
 
 function formatComposeNoticeLine(line: string): string {
