@@ -102,13 +102,25 @@ async function buildProjectListRow(
     options: RunCommandOptions,
   ) => Promise<ProjectListContainer[]>,
 ): Promise<ProjectListRow> {
-  const containers = await listProjectContainers(project, options);
+  const startup = project.enabled === 1 ? "enabled" : "disabled";
 
-  return {
-    name: project.name,
-    startup: project.enabled === 1 ? "enabled" : "disabled",
-    ...formatProjectState(containers, listOptions),
-  };
+  try {
+    const containers = await listProjectContainers(project, options);
+
+    return {
+      name: project.name,
+      startup,
+      ...formatProjectState(containers, listOptions),
+    };
+  } catch {
+    return {
+      name: project.name,
+      startup,
+      state: "invalid",
+      created: "",
+      ports: "",
+    };
+  }
 }
 
 export function formatProjectState(
