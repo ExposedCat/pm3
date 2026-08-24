@@ -806,7 +806,9 @@ export async function listProjectComposeContainers(
 
   if (result.code !== 0) {
     throw new Error(
-      `${PODMAN_COMPOSE_COMMAND} exited with code ${result.code}`,
+      result.stderr?.trim() ||
+        result.stdout?.trim() ||
+        `${PODMAN_COMPOSE_COMMAND} ps exited with code ${result.code}`,
     );
   }
 
