@@ -5,7 +5,7 @@ type ProjectEnabledValue = 0 | 1;
 type ProjectGitValue = 0 | 1;
 
 export type ProjectTable = {
-  composeFile: string | null;
+  composeArgs: Generated<string>;
   id: Generated<number>;
   name: string;
   workingDir: string;
@@ -13,10 +13,14 @@ export type ProjectTable = {
   git: Generated<ProjectGitValue>;
 };
 
-export type Project = Selectable<ProjectTable>;
+type ProjectRow = Selectable<ProjectTable>;
+
+export type Project = Omit<ProjectRow, "composeArgs"> & {
+  composeArgs: string[];
+};
 export type ProjectListItem = Pick<
   Project,
-  "composeFile" | "id" | "name" | "workingDir" | "enabled" | "git"
+  "composeArgs" | "id" | "name" | "workingDir" | "enabled" | "git"
 >;
 
 const PROJECT_DISABLED = 0 as const;
@@ -27,49 +31,57 @@ const PROJECT_GIT_ENABLED = 1 as const;
 export async function listProjects(
   db: PM3Database,
 ): Promise<ProjectListItem[]> {
-  return await db
+  const projects = await db
     .selectFrom("projects")
-    .select(["composeFile", "id", "name", "workingDir", "enabled", "git"])
+    .select(["composeArgs", "id", "name", "workingDir", "enabled", "git"])
     .orderBy("name", "asc")
     .execute();
+
+  return projects.map(parseProject);
 }
 
 export async function listEnabledProjects(db: PM3Database): Promise<Project[]> {
-  return await db
+  const projects = await db
     .selectFrom("projects")
     .selectAll()
     .where("enabled", "=", PROJECT_ENABLED)
     .orderBy("name", "asc")
     .execute();
+
+  return projects.map(parseProject);
 }
 
 export async function getProjectDetails(
   db: PM3Database,
   id: number,
 ): Promise<Project | undefined> {
-  return await db
+  const project = await db
     .selectFrom("projects")
     .selectAll()
     .where("id", "=", id)
     .executeTakeFirst();
+
+  return project ? parseProject(project) : undefined;
 }
 
 export async function getProjectByName(
   db: PM3Database,
   name: string,
 ): Promise<Project | undefined> {
-  return await db
+  const project = await db
     .selectFrom("projects")
     .selectAll()
     .where("name", "=", name)
     .executeTakeFirst();
+
+  return project ? parseProject(project) : undefined;
 }
 
 export type AddProjectInput = Pick<
   Insertable<ProjectTable>,
   "name" | "workingDir"
 > & {
-  composeFile?: string;
+  composeArgs?: readonly string[];
   git?: boolean;
 };
 
@@ -82,9 +94,9 @@ export async function addProject(
     .values({
       name: input.name,
       workingDir: input.workingDir,
-      ...(input.composeFile === undefined
+      ...(input.composeArgs === undefined
         ? {}
-        : { composeFile: input.composeFile }),
+        : { composeArgs: JSON.stringify(input.composeArgs) }),
       ...(input.git === undefined ? {} : { git: toProjectGitValue(input.git) }),
     })
     .executeTakeFirst();
@@ -144,4 +156,16 @@ async function setProjectEnabled(
 
 function toProjectGitValue(git: boolean): ProjectGitValue {
   return git ? PROJECT_GIT_ENABLED : PROJECT_GIT_DISABLED;
+}
+
+function parseProject(project: ProjectRow): Project {
+  const composeArgs: unknown = JSON.parse(project.composeArgs);
+  if (
+    !Array.isArray(composeArgs) ||
+    !composeArgs.every((arg): arg is string => typeof arg === "string")
+  ) {
+    throw new Error(`Invalid compose arguments for project: ${project.name}`);
+  }
+
+  return { ...project, composeArgs };
 }

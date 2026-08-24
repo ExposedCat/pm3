@@ -51,7 +51,7 @@ type ProjectComposeStatusEvent = {
 export const STOP_COMPOSE_ARGS = ["down", "--remove-orphans"] as const;
 
 type ComposeProject = {
-  composeFile?: string | null;
+  composeArgs?: readonly string[];
   name: string;
   workingDir: string;
 };

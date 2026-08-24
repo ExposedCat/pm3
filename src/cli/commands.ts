@@ -182,10 +182,17 @@ type GlobalOptionsResult = {
 
 function parseGlobalOptions(args: readonly string[]): GlobalOptionsResult {
   const commandArgs: string[] = [];
+  let passthrough = false;
   let verbose = false;
 
   for (const arg of args) {
-    if (arg === "-v" || arg === "--verbose") {
+    if (arg === "--") {
+      passthrough = true;
+      commandArgs.push(arg);
+      continue;
+    }
+
+    if (!passthrough && (arg === "-v" || arg === "--verbose")) {
       verbose = true;
       continue;
     }

@@ -179,7 +179,10 @@ async function buildDaemonApiProjectListItem(
 }
 
 async function buildDaemonApiProjectShow(
-  project: Pick<ProjectListItem, "enabled" | "name" | "workingDir">,
+  project: Pick<
+    ProjectListItem,
+    "composeArgs" | "enabled" | "name" | "workingDir"
+  >,
   commandOptions: RunCommandOptions,
 ): Promise<ProjectShowResponse> {
   const { runSystemProcess } = await import("../cli/runtime/process.ts");

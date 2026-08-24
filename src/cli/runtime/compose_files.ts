@@ -13,7 +13,7 @@ const PODMAN_COMPOSE_FILES = [
 ];
 
 type ComposeProject = {
-  composeFile?: string | null;
+  composeArgs?: readonly string[];
   workingDir: string;
 };
 
@@ -30,6 +30,10 @@ export type ComposeConfigDiscovery =
 export async function hasComposeFile(
   project: ComposeProject,
 ): Promise<boolean> {
+  if (project.composeArgs?.length) {
+    return true;
+  }
+
   return (await resolveComposeFile(project)) !== undefined;
 }
 
@@ -37,7 +41,7 @@ export function createPodmanComposeArgs(
   project: ComposeProject,
   args: readonly string[],
 ): string[] {
-  return project.composeFile ? ["-f", project.composeFile, ...args] : [...args];
+  return [...(project.composeArgs ?? []), ...args];
 }
 
 export async function listComposeServices(
@@ -112,12 +116,6 @@ export async function readComposeConfig(
 async function resolveComposeFile(
   project: ComposeProject,
 ): Promise<string | undefined> {
-  if (project.composeFile) {
-    return (await isFile(project.composeFile))
-      ? project.composeFile
-      : undefined;
-  }
-
   for (const fileName of PODMAN_COMPOSE_FILES) {
     const path = `${project.workingDir}/${fileName}`;
     if (await isFile(path)) {

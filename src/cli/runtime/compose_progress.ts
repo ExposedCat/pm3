@@ -29,7 +29,7 @@ const INFINITE_RETRY_ATTEMPTS = 3;
 const HEALTH_STATUS_POLL_INTERVAL_MS = 1_000;
 
 type ComposeProject = {
-  composeFile?: string | null;
+  composeArgs?: readonly string[];
   name: string;
   workingDir: string;
 };

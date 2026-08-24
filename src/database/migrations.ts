@@ -5,6 +5,7 @@ import * as addProjectServiceHealth from "./migrations/2026-05-02-add-project-se
 import * as addProjectServiceState from "./migrations/2026-05-02-add-project-service-state.ts";
 import * as addProjectGit from "./migrations/2026-07-16-add-project-git.ts";
 import * as addProjectComposeFile from "./migrations/2026-07-20-add-project-compose-file.ts";
+import * as replaceProjectComposeFileWithArgs from "./migrations/2026-08-15-replace-project-compose-file-with-args.ts";
 
 const migrations = {
   "2026-04-22-create-projects": createProjects,
@@ -13,6 +14,8 @@ const migrations = {
   "2026-05-02-add-project-service-state": addProjectServiceState,
   "2026-07-16-add-project-git": addProjectGit,
   "2026-07-20-add-project-compose-file": addProjectComposeFile,
+  "2026-08-15-replace-project-compose-file-with-args":
+    replaceProjectComposeFileWithArgs,
 };
 
 export async function migrateDatabase<DB>(db: Kysely<DB>): Promise<void> {

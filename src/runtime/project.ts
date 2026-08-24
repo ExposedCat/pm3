@@ -10,7 +10,7 @@ import {
 } from "../cli/runtime/compose.ts";
 
 type ProjectRuntime = {
-  composeFile?: string | null;
+  composeArgs?: readonly string[];
   git?: 0 | 1;
   name: string;
   workingDir: string;

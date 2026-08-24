@@ -8,7 +8,7 @@ import {
 import type { ProcessCommand } from "./process.ts";
 
 type ComposeProject = {
-  composeFile?: string | null;
+  composeArgs?: readonly string[];
   name: string;
   workingDir: string;
 };
