@@ -3,7 +3,7 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { green, red, yellow } from "../output/color.ts";
+import { green, orange, red, yellow } from "../output/color.ts";
 import { formatTable } from "../output/table.ts";
 import { requireNoExtraArgs } from "../utils.ts";
 
@@ -315,9 +315,15 @@ export function formatListCell(cell: {
   const match = cell.value.match(/^(.+?)(\s*)$/);
   const content = match?.[1] ?? cell.value;
   const padding = match?.[2] ?? "";
-  const state = content.match(/^(down|starting|stopping|up)(?:\s|$)/)?.[1];
+  const state = content.match(
+    /^(down|invalid|starting|stopping|up)(?:\s|$)/,
+  )?.[1];
 
   if (state === "down") {
+    return `${orange(content)}${padding}`;
+  }
+
+  if (state === "invalid") {
     return `${red(content)}${padding}`;
   }
 

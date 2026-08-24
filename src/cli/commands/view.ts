@@ -4,7 +4,7 @@ import type {
   RunCommandOptions,
 } from "../commands.ts";
 import { withTargetProjectList } from "../commands.ts";
-import { green, red, underline, yellow } from "../output/color.ts";
+import { green, orange, red, underline, yellow } from "../output/color.ts";
 import { startLoader } from "../output/loader.ts";
 import { requireNoExtraArgs } from "../utils.ts";
 import {
@@ -249,7 +249,11 @@ function formatStartupValue(startup: string): string {
 function formatStateDot(state: string): string {
   const kind = state.match(/^(down|invalid|starting|stopping|up)(?:\s|$)/)?.[1];
 
-  if (kind === "down" || kind === "invalid") {
+  if (kind === "down") {
+    return orange("●");
+  }
+
+  if (kind === "invalid") {
     return red("●");
   }
 

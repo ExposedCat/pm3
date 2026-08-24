@@ -18,6 +18,10 @@ export function red(value: string): string {
   return color(31, value);
 }
 
+export function orange(value: string): string {
+  return `\x1b[38;5;208m${value}\x1b[0m`;
+}
+
 export function yellow(value: string): string {
   return color(33, value);
 }
