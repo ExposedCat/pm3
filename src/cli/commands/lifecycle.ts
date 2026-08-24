@@ -16,6 +16,7 @@ type LifecycleCommand = CliCommand<LifecycleCommandKind> & {
   detach: boolean;
   git?: boolean;
   noCache: boolean;
+  operationArgs: string[];
 };
 
 export const startCommand = createLifecycleCommand({
@@ -53,6 +54,7 @@ function createLifecycleCommand(
       "[-d|--detach]",
       ...formatLifecycleBuildOptions(config),
       ...formatLifecycleGitOptions(config),
+      ...(config.kind === "restart" ? [] : ["[-- PODMAN-COMPOSE-ARGS...]"]),
     ],
     description: config.description,
     parse: (args) => parseLifecycleArgs(config, args),
@@ -85,8 +87,16 @@ function parseLifecycleArgs(
   let git: boolean | undefined;
   let noCache = false;
   let noBuild = false;
+  let operationArgs: string[] = [];
 
-  for (const arg of args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === "--" && config.kind !== "restart") {
+      operationArgs = args.slice(index + 1);
+      break;
+    }
+
     if (arg === "-d" || arg === "--detach") {
       detach = true;
       continue;
@@ -161,9 +171,18 @@ function parseLifecycleArgs(
     detach,
     git,
     noCache,
+    operationArgs,
     run: (options) =>
       runLifecycleCommand(
-        { kind: config.kind, name, build, detach, git, noCache },
+        {
+          kind: config.kind,
+          name,
+          build,
+          detach,
+          git,
+          noCache,
+          operationArgs,
+        },
         options,
       ),
   };
@@ -210,7 +229,7 @@ function updateGitOption(
 
 type LifecycleRunCommand = Pick<
   LifecycleCommand,
-  "build" | "detach" | "git" | "kind" | "name" | "noCache"
+  "build" | "detach" | "git" | "kind" | "name" | "noCache" | "operationArgs"
 >;
 
 async function runLifecycleCommand(
@@ -292,6 +311,7 @@ async function runProjectLifecycle(
         detached: command.detach,
         git: runOptions.gitPulled ? false : command.git,
         noCache: command.noCache,
+        upArgs: command.operationArgs,
       });
     } else if (command.kind === "restart") {
       await restartProject(project, options, {
@@ -301,7 +321,10 @@ async function runProjectLifecycle(
         noCache: command.noCache,
       });
     } else {
-      await stopProject(project, options, { detached: command.detach });
+      await stopProject(project, options, {
+        detached: command.detach,
+        downArgs: command.operationArgs,
+      });
     }
 
     await notifyDaemon({
@@ -371,6 +394,9 @@ function createDetachedLifecycleArgs(
     ...(command.git === false ? ["--local"] : []),
     ...(command.noCache ? ["--no-cache"] : []),
     command.name,
+    ...(command.operationArgs.length > 0
+      ? ["--", ...command.operationArgs]
+      : []),
   ];
 }
 

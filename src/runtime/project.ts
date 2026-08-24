@@ -23,6 +23,7 @@ export type ProjectStartOptions = {
   noCache?: boolean;
   onHealthChange?: (change: ProjectComposeHealthChange) => void;
   trackHealth?: boolean;
+  upArgs?: readonly string[];
 };
 
 export async function startProject(
@@ -42,7 +43,7 @@ export async function startProject(
     });
     await runProjectCompose(
       project,
-      ["up", "-d", "--force-recreate"],
+      ["up", "-d", "--force-recreate", ...(startOptions.upArgs ?? [])],
       options,
       {
         detached: startOptions.detached,
@@ -53,11 +54,16 @@ export async function startProject(
     return;
   }
 
-  await runProjectCompose(project, ["up", "-d"], options, {
-    detached: startOptions.detached,
-    onHealthChange: startOptions.onHealthChange,
-    trackHealth: startOptions.trackHealth,
-  });
+  await runProjectCompose(
+    project,
+    ["up", "-d", ...(startOptions.upArgs ?? [])],
+    options,
+    {
+      detached: startOptions.detached,
+      onHealthChange: startOptions.onHealthChange,
+      trackHealth: startOptions.trackHealth,
+    },
+  );
 }
 
 export async function stopProject(
@@ -65,13 +71,20 @@ export async function stopProject(
   options: RunCommandOptions,
   stopOptions: ProjectStopOptions = {},
 ): Promise<void> {
-  await runProjectCompose(project, STOP_COMPOSE_ARGS, options, {
-    detached: stopOptions.detached,
-  });
+  await runProjectCompose(
+    project,
+    [...STOP_COMPOSE_ARGS, ...(stopOptions.downArgs ?? [])],
+    options,
+    {
+      detached: stopOptions.detached,
+    },
+  );
 }
 
 export type ProjectRestartOptions = ProjectStartOptions;
-export type ProjectStopOptions = Pick<ProjectStartOptions, "detached">;
+export type ProjectStopOptions = Pick<ProjectStartOptions, "detached"> & {
+  downArgs?: readonly string[];
+};
 
 export async function restartProject(
   project: ProjectRuntime,
