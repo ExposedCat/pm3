@@ -4,7 +4,7 @@ import type {
   CommandDefinition,
   RunCommandOptions,
 } from "../commands.ts";
-import { usageError } from "../errors.ts";
+import { inputError, usageError } from "../errors.ts";
 import { requireArgument, requireOptionValue } from "../utils.ts";
 
 export type CreateCommand = CliCommand<"create"> & {
@@ -106,17 +106,32 @@ async function runCreateCommand(
       await requireProjectGitRepository({ name, workingDir }, options);
     }
 
-    await addProject(db, {
-      name,
-      workingDir,
-      composeArgs: command.composeArgs,
-      git: command.git,
-    });
+    try {
+      await addProject(db, {
+        name,
+        workingDir,
+        composeArgs: command.composeArgs,
+        git: command.git,
+      });
+    } catch (error) {
+      if (isDuplicateProjectNameError(error)) {
+        throw inputError(`Project ${name} already exists`);
+      }
+
+      throw error;
+    }
     console.log(
       `Created ${name} with compose arguments \`${command.composeArgs.join(" ")}\``,
     );
     console.log(`Start with \`pm3 start ${name}\``);
   });
+}
+
+function isDuplicateProjectNameError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("UNIQUE constraint failed: projects.name")
+  );
 }
 
 function updateGitOption(

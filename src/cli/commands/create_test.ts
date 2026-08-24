@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { parseArgs, runCommand } from "../commands.ts";
 
 Deno.test("create parses podman-compose arguments after the separator", () => {
@@ -50,4 +50,26 @@ Deno.test("create no longer accepts --compose", () => {
     Error,
     "Unknown option for create: --compose",
   );
+});
+
+Deno.test("create reports a friendly duplicate-name error", async () => {
+  const directory = await Deno.makeTempDir();
+  const databasePath = `${directory}/pm3.sqlite`;
+
+  try {
+    await runCommand(parseArgs(["create", "/first", "--name", "api"]), {
+      databasePath,
+    });
+
+    await assertRejects(
+      () =>
+        runCommand(parseArgs(["create", "/second", "--name", "api"]), {
+          databasePath,
+        }),
+      Error,
+      "Project api already exists",
+    );
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
 });
