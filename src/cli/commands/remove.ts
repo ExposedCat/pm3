@@ -63,22 +63,55 @@ async function runRemoveCommand(
     options,
     command.name,
     async (db, projects) => {
-      for (const project of projects) {
-        const containers = await listProjectContainers(project, options);
-        if (!command.force && hasRunningContainer(containers)) {
-          throw inputError(
-            `Failed to remove project: "${project.name}" is running`,
-          );
+      if (!command.force) {
+        for (const project of projects) {
+          if (!(await isDirectory(project.workingDir))) {
+            throw inputError(
+              `Project ${project.name} has invalid cwd '${project.workingDir}'\n` +
+                "Retry with `--force` to remove as is",
+            );
+          }
+
+          const containers = await listProjectContainers(project, options);
+          if (hasRunningContainer(containers)) {
+            throw inputError(
+              `Failed to remove project: "${project.name}" is running`,
+            );
+          }
         }
       }
 
       for (const project of projects) {
-        await removeProjectArtifacts(project, options);
+        if (command.force) {
+          try {
+            await removeProjectArtifacts(project, options);
+          } catch {
+            // Force removal keeps going when Podman cleanup is unavailable.
+          }
+        } else {
+          await removeProjectArtifacts(project, options);
+        }
+
         await deleteProject(db, project.id);
       }
     },
     (name) => `Failed to remove project: "${name}" not found`,
   );
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(path)).isDirectory;
+  } catch (error) {
+    if (
+      error instanceof Deno.errors.NotFound ||
+      error instanceof Deno.errors.NotADirectory
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
 }
 
 type ProjectStateContainer = {
