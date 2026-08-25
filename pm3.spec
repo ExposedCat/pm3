@@ -1,5 +1,5 @@
 Name:           pm3
-Version:        3.2.1
+Version:        3.2.2
 Release:        1
 Summary:        Container project manager
 
@@ -51,6 +51,9 @@ install -Dm0644 %{SOURCE2} %{buildroot}%{_userunitdir}/pm3.service
 %{_userunitdir}/pm3.service
 
 %changelog
+* Tue Aug 25 2026 Artem Prokop <artem13.prokop@gmail.com> 3.2.2-1
+- feat(compose): pull missing images before start (artem13.prokop@gmail.com)
+
 * Tue Aug 25 2026 Artem Prokop <artem13.prokop@gmail.com> 3.2.1-1
 - feat(cli): confirm all-project commands with yes flag
   (artem13.prokop@gmail.com)
