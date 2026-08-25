@@ -7,8 +7,8 @@ import {
   getComposeEventService,
   getComposeHealthStatus,
   getComposeServiceStatus,
-  type PodmanEvent,
   parsePodmanEvent,
+  type PodmanEvent,
 } from "./compose_events.ts";
 import {
   createPodmanComposeArgs,
@@ -317,8 +317,8 @@ export async function startComposeProgress(
         }
 
         const formattedNotice = formatComposeNoticeLine(line);
-        const noticeService =
-          getComposeNoticeService(services, line) || lastCommandService;
+        const noticeService = getComposeNoticeService(services, line) ||
+          lastCommandService;
         if (noticeService) {
           startComposeServiceProgress(
             project.name,
@@ -691,9 +691,10 @@ export function isComposeNoticeLine(line: string): boolean {
 
 function parseComposeLogLevel(line: string): string | undefined {
   const loggerPrefix =
-    /^\s*(trace|debug|info|warn(?:ing)?|err(?:or)?|critical|fatal|panic):/i.exec(
-      line,
-    );
+    /^\s*(trace|debug|info|warn(?:ing)?|err(?:or)?|critical|fatal|panic):/i
+      .exec(
+        line,
+      );
   if (loggerPrefix) {
     return loggerPrefix[1].toLowerCase();
   }
@@ -855,8 +856,8 @@ function finalizeExpiredComposeHealth(
     }
 
     const startedAtMs = startedAt.get(service);
-    const waitMs =
-      waitPolicies.get(service)?.waitMs ?? HEALTH_SETTLE_TIMEOUT_MS;
+    const waitMs = waitPolicies.get(service)?.waitMs ??
+      HEALTH_SETTLE_TIMEOUT_MS;
     if (startedAtMs === undefined || startedAtMs + waitMs > now) {
       continue;
     }
@@ -905,11 +906,12 @@ function getNextComposeHealthDeadline(
     }
 
     const startedAtMs = startedAt.get(service);
-    const waitMs =
-      waitPolicies.get(service)?.waitMs ?? HEALTH_SETTLE_TIMEOUT_MS;
+    const waitMs = waitPolicies.get(service)?.waitMs ??
+      HEALTH_SETTLE_TIMEOUT_MS;
     const deadline = (startedAtMs ?? Date.now()) + waitMs;
-    nextDeadline =
-      nextDeadline === undefined ? deadline : Math.min(nextDeadline, deadline);
+    nextDeadline = nextDeadline === undefined
+      ? deadline
+      : Math.min(nextDeadline, deadline);
   }
 
   return nextDeadline;

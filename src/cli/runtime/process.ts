@@ -30,8 +30,7 @@ export type RunProcess = (command: ProcessCommand) => Promise<ProcessResult>;
 export async function runSystemProcess(
   command: ProcessCommand,
 ): Promise<ProcessResult> {
-  const interactive =
-    command.interactive &&
+  const interactive = command.interactive &&
     !command.detached &&
     Deno.stdin.isTerminal() &&
     Deno.stdout.isTerminal() &&
@@ -135,10 +134,9 @@ async function collectOutput(
   const remaining = streamDecoder.decode();
   if (remaining) {
     onOutput?.(remaining);
-    output =
-      tailLimit === undefined
-        ? output
-        : `${output}${remaining}`.slice(-tailLimit);
+    output = tailLimit === undefined
+      ? output
+      : `${output}${remaining}`.slice(-tailLimit);
   }
 
   if (tailLimit !== undefined) {
@@ -260,7 +258,7 @@ async function settlesWithin(
 
 function delay(milliseconds: number): Promise<false> {
   return new Promise((resolve) =>
-    setTimeout(() => resolve(false), milliseconds),
+    setTimeout(() => resolve(false), milliseconds)
   );
 }
 

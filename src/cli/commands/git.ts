@@ -74,7 +74,9 @@ async function runGitCommand(
       for (const project of projects) {
         await setProjectGit(db, project.id, command.mode === "on");
         console.log(
-          `Git pulling ${command.mode === "on" ? "enabled" : "disabled"} for ${project.name}`,
+          `Git pulling ${
+            command.mode === "on" ? "enabled" : "disabled"
+          } for ${project.name}`,
         );
       }
     },

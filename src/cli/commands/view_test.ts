@@ -115,9 +115,9 @@ Deno.test("view renders known details and errors for an invalid project", async 
             command.args.includes("ps")
               ? { code: 1, stderr: "could not parse broken.yaml" }
               : {
-                  code: 1,
-                  stderr: "services.web.image must be a string",
-                },
+                code: 1,
+                stderr: "services.web.image must be a string",
+              },
           ),
       });
     } finally {

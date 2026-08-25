@@ -83,7 +83,7 @@ export function parseArgs(args: string[]): ParsedCommand {
   }
 
   const definition = commandDefinitions.find((command) =>
-    command.names.includes(commandName),
+    command.names.includes(commandName)
   );
   if (!definition) {
     throw usageError(`Unknown command: ${commandName}`);
@@ -186,8 +186,7 @@ export async function withTargetProjectList<T>(
     }
 
     const confirmAllProjects = options.confirmAllProjects ?? promptAllProjects;
-    const confirmed =
-      options.yes ||
+    const confirmed = options.yes ||
       (await confirmAllProjects(
         `Are you sure to execute '${command}' on ${projects.length} projects? [Y/n]`,
       ));

@@ -7,11 +7,11 @@ import {
   getComposeEventWorkingDir,
   getComposeHealthStatus,
   getComposeServiceStatus,
+  parsePodmanEvent,
   type ProjectComposeHealthChange,
   type ProjectComposeHealthStatus,
   type ProjectComposeServiceChange,
   type ProjectComposeServiceStatus,
-  parsePodmanEvent,
 } from "./compose_events.ts";
 import {
   createPodmanComposeArgs,
@@ -27,8 +27,8 @@ import {
   startComposeProgress,
 } from "./compose_progress.ts";
 import {
-  type ProjectComposeContainer,
   parseComposeContainerJson,
+  type ProjectComposeContainer,
 } from "./compose_ps.ts";
 import { createComposeStartupTracker } from "./compose_startup.ts";
 import type { ProcessCommand, ProcessResult } from "./process.ts";
@@ -66,8 +66,7 @@ export async function runProjectCompose(
   const operation = getComposeOperation(args);
   const trackHealth = runOptions.trackHealth ?? true;
   const startupAbortController = new AbortController();
-  const canAbortUnhealthy =
-    trackHealth &&
+  const canAbortUnhealthy = trackHealth &&
     isHealthTrackedOperation(operation) &&
     (!options.runProcess || options.runLineStream);
   const { runSystemProcess } = await import("./process.ts");
@@ -96,21 +95,21 @@ export async function runProjectCompose(
     },
     onServiceChange: startupTracker
       ? (change) => {
-          startupTracker.recordService(change.service, change.status);
-          if (startupTracker.abortReason()) {
-            startupAbortController.abort();
-          }
+        startupTracker.recordService(change.service, change.status);
+        if (startupTracker.abortReason()) {
+          startupAbortController.abort();
         }
+      }
       : undefined,
     onUnhealthy: canAbortUnhealthy
       ? () => healthAbortController?.abort()
       : undefined,
     signal: canAbortUnhealthy
       ? combineAbortSignals(
-          options.signal,
-          healthAbortController?.signal,
-          startupAbortController.signal,
-        )
+        options.signal,
+        healthAbortController?.signal,
+        startupAbortController.signal,
+      )
       : options.signal,
     trackHealth,
   });
@@ -270,10 +269,9 @@ async function resolveProjectLogTargets(
     containersByService.set(container.service, serviceContainers);
   }
 
-  const targetServices =
-    logsOptions.services.length > 0
-      ? logsOptions.services
-      : [...containersByService.keys()];
+  const targetServices = logsOptions.services.length > 0
+    ? logsOptions.services
+    : [...containersByService.keys()];
 
   const missingServices = targetServices.filter(
     (service) => (containersByService.get(service) ?? []).length === 0,
@@ -359,16 +357,20 @@ async function followProjectLogs(
   const renderer = logsOptions.raw
     ? createRawLogRenderer(targets, targetColors)
     : createColumnLogRenderer(targets, targetColors, {
-        printHeader: !checkpoint,
-      });
+      printHeader: !checkpoint,
+    });
   const followLogOptions = checkpoint
     ? createFollowLogsOptions(logsOptions, checkpoint)
     : logsOptions;
 
   const streams = targets.map((target) =>
-    runLogStream(project, target, followLogOptions, options, (line) =>
-      renderer.write(target.service, line),
-    ),
+    runLogStream(
+      project,
+      target,
+      followLogOptions,
+      options,
+      (line) => renderer.write(target.service, line),
+    )
   );
 
   try {
@@ -472,7 +474,7 @@ function printColumnHeader(
     targets.map((target) =>
       (targetColors.get(target.service) ?? ((value: string) => value))(
         target.service,
-      ),
+      )
     ),
   );
   printColumnRow(
@@ -487,7 +489,7 @@ function printColumnRow(
 ): void {
   const widths = getLogColumnWidths(targets.length);
   const cells = values.map((value, index) =>
-    fitColumnText(value, widths[index]),
+    fitColumnText(value, widths[index])
   );
   console.log(cells.join(" | "));
 }
@@ -593,7 +595,7 @@ async function waitForAbort(signal: AbortSignal | undefined): Promise<void> {
   }
 
   await new Promise<void>((resolve) =>
-    signal.addEventListener("abort", () => resolve(), { once: true }),
+    signal.addEventListener("abort", () => resolve(), { once: true })
   );
 }
 
@@ -952,9 +954,11 @@ function formatUnhealthyServices(
   projectName: string,
   services: readonly string[],
 ): string {
-  return `Unhealthy services: ${services
-    .map((service) => `${projectName}/${service}`)
-    .join(", ")}`;
+  return `Unhealthy services: ${
+    services
+      .map((service) => `${projectName}/${service}`)
+      .join(", ")
+  }`;
 }
 
 function countWarnings(result: { stdout?: string; stderr?: string }): number {
@@ -990,15 +994,13 @@ async function runComposeCommand(
   const loader = startLoader(`${operation} ${project.name}`, {
     enabled: !options.verbose && !runOptions.detached,
   });
-  const output = runOptions.detached
-    ? createSilentComposeOutput()
-    : {
-        finishLine: loader.finishLine,
-        startLineAfter: loader.startLineAfter,
-        startLine: loader.startLine,
-        writeLine: loader.writeLine,
-        writeLineAfter: loader.writeLineAfter,
-      };
+  const output = runOptions.detached ? createSilentComposeOutput() : {
+    finishLine: loader.finishLine,
+    startLineAfter: loader.startLineAfter,
+    startLine: loader.startLine,
+    writeLine: loader.writeLine,
+    writeLineAfter: loader.writeLineAfter,
+  };
   let progress = createEmptyComposeProgress();
 
   try {

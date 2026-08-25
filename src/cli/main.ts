@@ -14,7 +14,7 @@ export async function runCliMain(args: readonly string[]): Promise<number> {
     console.error(message);
     return 1;
   } finally {
-    await signals.dispose();
+    signals.dispose();
   }
 }
 
@@ -24,7 +24,7 @@ if (import.meta.main) {
 
 type CliSignals = {
   detachSignal: AbortSignal;
-  dispose(): Promise<void>;
+  dispose(): void;
   signal: AbortSignal;
 };
 
@@ -47,7 +47,7 @@ function createCliSignals(): CliSignals {
   return {
     detachSignal: detachController.signal,
     signal: interruptController.signal,
-    async dispose() {
+    dispose() {
       for (const signal of ["SIGINT", "SIGTERM"] as const) {
         try {
           Deno.removeSignalListener(signal, abort);

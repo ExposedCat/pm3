@@ -49,8 +49,7 @@ export async function runDaemon(
   daemonOptions: DaemonRunOptions = {},
 ): Promise<void> {
   console.log("Starting PM3 Daemon...");
-  const signal =
-    daemonOptions.signal ??
+  const signal = daemonOptions.signal ??
     commandOptions.signal ??
     new AbortController().signal;
   const hookErrors = new Set<string>();
@@ -174,7 +173,7 @@ export async function runDaemon(
             runHook,
             daemonProject,
             watcherConfigs.get(daemonProject.name),
-          ),
+          )
         );
       },
     );
@@ -288,14 +287,13 @@ async function runDaemonLifecycleOperation(
   action: "restart" | "start" | "stop",
   lifecycleOptions: Parameters<DaemonApiLifecycle>[2],
 ): Promise<void> {
-  const stopState =
-    action === "stop"
-      ? await snapshotProjectState(
-          project,
-          commandOptions,
-          listProjectContainers,
-        )
-      : [];
+  const stopState = action === "stop"
+    ? await snapshotProjectState(
+      project,
+      commandOptions,
+      listProjectContainers,
+    )
+    : [];
   await handleDaemonMessage(
     db,
     context.projects,
@@ -336,25 +334,19 @@ async function runDaemonLifecycleOperation(
       context.serviceStatuses,
       context.runHook,
       {
-        health:
-          action === "stop"
-            ? []
-            : await snapshotProjectHealth(
-                project,
-                commandOptions,
-                listProjectContainers,
-              ),
+        health: action === "stop" ? [] : await snapshotProjectHealth(
+          project,
+          commandOptions,
+          listProjectContainers,
+        ),
         operation: action,
         project: project.name,
         projectId: project.id,
-        state:
-          action === "stop"
-            ? stopState
-            : await snapshotProjectState(
-                project,
-                commandOptions,
-                listProjectContainers,
-              ),
+        state: action === "stop" ? stopState : await snapshotProjectState(
+          project,
+          commandOptions,
+          listProjectContainers,
+        ),
         type: "lifecycle.end",
       },
     );
@@ -386,7 +378,7 @@ async function snapshotProjectHealth(
   return containers.flatMap((container) =>
     container.service && container.healthStatus
       ? [{ service: container.service, status: container.healthStatus }]
-      : [],
+      : []
   );
 }
 
@@ -444,11 +436,9 @@ async function loadComposeWatcherConfigs(
 
   for (const project of projects) {
     const config = await readComposeStartupConfig(project, runProcess);
-    const shouldWatch =
-      config?.policy.requiredServices.some(
-        (service) =>
-          getComposeServiceHealthCheckAt(config, service) === "always",
-      ) ?? false;
+    const shouldWatch = config?.policy.requiredServices.some(
+      (service) => getComposeServiceHealthCheckAt(config, service) === "always",
+    ) ?? false;
     if (config && shouldWatch) {
       configs.set(project.name, config);
     }
@@ -740,7 +730,7 @@ function isProjectDown(
   }
 
   return containers.every((container) =>
-    ["created", "exited", "stopped"].includes(container.state.toLowerCase()),
+    ["created", "exited", "stopped"].includes(container.state.toLowerCase())
   );
 }
 
@@ -815,8 +805,7 @@ function createComposeHookRunner(
     }
 
     const errorKey = formatHookErrorKey(project.name, service, event);
-    const message =
-      result.stderr?.trim() ||
+    const message = result.stderr?.trim() ||
       result.stdout?.trim() ||
       `hook exited with code ${result.code}`;
     if (hookErrors.has(errorKey)) {

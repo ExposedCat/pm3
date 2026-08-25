@@ -155,7 +155,7 @@ async function listDaemonApiProjects(
   const projects = await listProjects(db);
   return await Promise.all(
     projects.map((project) =>
-      buildDaemonApiProjectListItem(project, commandOptions, detailed),
+      buildDaemonApiProjectListItem(project, commandOptions, detailed)
     ),
   );
 }

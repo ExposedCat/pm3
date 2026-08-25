@@ -135,8 +135,9 @@ function writeGitPullResult(
 }
 
 function formatError(error: unknown): string {
-  const message =
-    error instanceof Error && error.message ? error.message : "Command failed";
+  const message = error instanceof Error && error.message
+    ? error.message
+    : "Command failed";
   return message.replace(/\s+/g, " ").trim();
 }
 

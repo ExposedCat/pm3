@@ -67,25 +67,28 @@ async function runViewCommand(
       async (_db, projects) =>
         await Promise.all(
           projects.map(async (project) => {
-            const [containersResult, discoveryResult] =
-              await Promise.allSettled([
+            const [containersResult, discoveryResult] = await Promise
+              .allSettled([
                 listProjectContainers(project, options),
                 listComposeServices(project, runProcess),
               ]);
             const errors: string[] = [];
-            const containers =
-              containersResult.status === "fulfilled"
-                ? containersResult.value
-                : [];
+            const containers = containersResult.status === "fulfilled"
+              ? containersResult.value
+              : [];
             if (containersResult.status === "rejected") {
               errors.push(
-                `Failed to inspect containers: ${formatErrorMessage(containersResult.reason)}`,
+                `Failed to inspect containers: ${
+                  formatErrorMessage(containersResult.reason)
+                }`,
               );
             }
 
             if (discoveryResult.status === "rejected") {
               errors.push(
-                `Failed to list compose services: ${formatErrorMessage(discoveryResult.reason)}`,
+                `Failed to list compose services: ${
+                  formatErrorMessage(discoveryResult.reason)
+                }`,
               );
             } else if (discoveryResult.value.kind === "error") {
               errors.push(
@@ -95,7 +98,7 @@ async function runViewCommand(
 
             const serviceNames = new Set<string>([
               ...(discoveryResult.status === "fulfilled" &&
-              discoveryResult.value.kind === "services"
+                  discoveryResult.value.kind === "services"
                 ? discoveryResult.value.services
                 : []),
               ...containers
@@ -109,15 +112,14 @@ async function runViewCommand(
                   service,
                   containers,
                   containersResult.status === "fulfilled",
-                ),
+                )
               );
             const knownProjectState = formatProjectState(containers, {
               detailed: true,
             });
-            const projectState =
-              errors.length > 0
-                ? { ...knownProjectState, state: "invalid" }
-                : knownProjectState;
+            const projectState = errors.length > 0
+              ? { ...knownProjectState, state: "invalid" }
+              : knownProjectState;
 
             return [
               formatProjectDetails(
@@ -181,9 +183,11 @@ function formatProjectDetails(
 ): string {
   const startup = enabled === 1 ? "enabled" : "disabled";
   return [
-    `${formatStateDot(projectState.state)} ${name} - ${formatProjectStateSummary(
-      projectState,
-    )}`,
+    `${formatStateDot(projectState.state)} ${name} - ${
+      formatProjectStateSummary(
+        projectState,
+      )
+    }`,
     ...formatDetailLines(
       [
         ["Startup", formatStartupValue(startup)],
@@ -215,9 +219,11 @@ function formatErrorMessage(error: unknown): string {
 
 function formatServiceDetails(row: ServiceRow): string {
   return [
-    `${" ".repeat(4)}${formatStateDot(row.state)} ${row.service} - ${formatProjectStateSummary(
-      row,
-    )}`,
+    `${" ".repeat(4)}${formatStateDot(row.state)} ${row.service} - ${
+      formatProjectStateSummary(
+        row,
+      )
+    }`,
     ...formatDetailLines([["Published ports", row.ports || "-"]], 8),
   ].join("\n");
 }

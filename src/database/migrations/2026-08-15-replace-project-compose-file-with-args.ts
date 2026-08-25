@@ -3,8 +3,10 @@ import { type Migration, sql } from "kysely";
 export const up: Migration["up"] = async (db) => {
   await db.schema
     .alterTable("projects")
-    .addColumn("composeArgs", "text", (column) =>
-      column.notNull().defaultTo("[]"),
+    .addColumn(
+      "composeArgs",
+      "text",
+      (column) => column.notNull().defaultTo("[]"),
     )
     .execute();
   await sql`

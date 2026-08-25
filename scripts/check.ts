@@ -1,14 +1,8 @@
 const tsFiles = await collectTsFiles("src");
 
 await run("deno", ["check", ...tsFiles]);
-await run("deno", [
-  "run",
-  "--no-lock",
-  "-A",
-  "npm:@biomejs/biome@2.4.6",
-  "check",
-  "src/",
-]);
+await run("deno", ["fmt", "--check", "src/"]);
+await run("deno", ["lint", "src/"]);
 
 async function collectTsFiles(root: string): Promise<string[]> {
   const files: string[] = [];

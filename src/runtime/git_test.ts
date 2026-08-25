@@ -3,11 +3,13 @@ import type { ProcessCommand, ProcessResult } from "../cli/runtime/process.ts";
 import { pullProjectGit } from "./git.ts";
 
 Deno.test("git pull reports its commit result", async (test) => {
-  for (const result of [
-    { commits: 0, message: "No changes" },
-    { commits: 1, message: "Pulled 1 commit" },
-    { commits: 3, message: "Pulled 3 commits" },
-  ]) {
+  for (
+    const result of [
+      { commits: 0, message: "No changes" },
+      { commits: 1, message: "Pulled 1 commit" },
+      { commits: 3, message: "Pulled 3 commits" },
+    ]
+  ) {
     await test.step(result.message, async () => {
       const processCalls: ProcessCommand[] = [];
       const output = await captureConsoleLog(() =>
@@ -19,7 +21,7 @@ Deno.test("git pull reports its commit result", async (test) => {
               return Promise.resolve(createGitResult(command, result.commits));
             },
           },
-        ),
+        )
       );
 
       assertEquals(output, [
@@ -51,17 +53,17 @@ Deno.test("git pull reports a concise failure", async () => {
               Promise.resolve(
                 command.args[0] === "pull"
                   ? {
-                      code: 1,
-                      stderr:
-                        "fatal: cannot fast-forward\nhint: reconcile branches",
-                    }
+                    code: 1,
+                    stderr:
+                      "fatal: cannot fast-forward\nhint: reconcile branches",
+                  }
                   : createGitResult(command, 0),
               ),
           },
         ),
       Error,
       "fatal: cannot fast-forward",
-    ),
+    )
   );
 
   assertEquals(output, [

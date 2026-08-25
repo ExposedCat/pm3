@@ -179,9 +179,11 @@ function parseComposeStartupPolicy(
   );
   if (unknownRequired.length > 0) {
     throw inputError(
-      `Unknown x-pm3.${projectName}.required_services entries: ${unknownRequired.join(
-        ", ",
-      )}`,
+      `Unknown x-pm3.${projectName}.required_services entries: ${
+        unknownRequired.join(
+          ", ",
+        )
+      }`,
     );
   }
 
@@ -242,12 +244,14 @@ export function evaluateComposeStartupPolicy(
 ): string {
   const classifications = classifyComposeStartup(config, state);
   const requiredBlocked = config.policy.requiredServices.filter((service) =>
-    isTerminalClassification(classifications.get(service) ?? "waiting"),
+    isTerminalClassification(classifications.get(service) ?? "waiting")
   );
   if (requiredBlocked.length > 0) {
-    return `Required services permanently unstartable: ${requiredBlocked.join(
-      ", ",
-    )}`;
+    return `Required services permanently unstartable: ${
+      requiredBlocked.join(
+        ", ",
+      )
+    }`;
   }
 
   return "";
@@ -261,7 +265,7 @@ function parseComposeServiceDependencies(
     return dependsOn.flatMap((dependency) =>
       typeof dependency === "string" && dependency.length > 0
         ? [{ service: dependency, condition: "service_started" as const }]
-        : [],
+        : []
     );
   }
 
@@ -351,7 +355,7 @@ function classifyComposeStartupService(
       service,
       dependency,
       chain,
-    ),
+    )
   );
   chain.delete(service);
 

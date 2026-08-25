@@ -4,8 +4,11 @@ export const up: Migration["up"] = async (db) => {
   await db.schema
     .createTable("projectServiceHealth")
     .ifNotExists()
-    .addColumn("projectId", "integer", (column) =>
-      column.notNull().references("projects.id").onDelete("cascade"),
+    .addColumn(
+      "projectId",
+      "integer",
+      (column) =>
+        column.notNull().references("projects.id").onDelete("cascade"),
     )
     .addColumn("service", "text", (column) => column.notNull())
     .addColumn("status", "text", (column) => column.notNull())

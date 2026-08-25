@@ -121,7 +121,9 @@ async function runCreateCommand(
       throw error;
     }
     console.log(
-      `Created ${name} with compose arguments \`${command.composeArgs.join(" ")}\``,
+      `Created ${name} with compose arguments \`${
+        command.composeArgs.join(" ")
+      }\``,
     );
     console.log(`Start with \`pm3 start ${name}\``);
   });

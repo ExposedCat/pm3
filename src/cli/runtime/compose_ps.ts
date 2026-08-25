@@ -78,8 +78,8 @@ function parseComposeContainerServiceStatus(
 function getComposeContainerService(container: PodmanComposeContainer): string {
   return (
     container.Labels?.["io.podman.compose.service"] ??
-    container.Labels?.["com.docker.compose.service"] ??
-    ""
+      container.Labels?.["com.docker.compose.service"] ??
+      ""
   );
 }
 

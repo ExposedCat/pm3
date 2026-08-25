@@ -25,8 +25,8 @@ export type PM3Database = Kysely<DatabaseSchema>;
 export function resolveDatabasePath(path?: string): string {
   return (
     path ??
-    getEnv(DATABASE_PATH_ENV) ??
-    join(resolveUserDataDir(), DATA_DIR_NAME, DATABASE_FILE_NAME)
+      getEnv(DATABASE_PATH_ENV) ??
+      join(resolveUserDataDir(), DATA_DIR_NAME, DATABASE_FILE_NAME)
   );
 }
 

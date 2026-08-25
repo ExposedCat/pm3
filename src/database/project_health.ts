@@ -35,7 +35,7 @@ export async function setProjectServiceHealth(
       conflict.columns(["projectId", "service"]).doUpdateSet({
         status: input.status,
         updatedAt,
-      }),
+      })
     )
     .execute();
 }

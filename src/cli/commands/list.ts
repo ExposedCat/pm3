@@ -85,7 +85,7 @@ async function runListCommand(
           listOptions,
           options,
           listProjectContainers,
-        ),
+        )
       ),
     );
 
@@ -180,7 +180,7 @@ function getProjectStateDuration(
 
   const timestamps = containers
     .map((container) =>
-      state === "up" ? container.startedAt : container.exitedAt,
+      state === "up" ? container.startedAt : container.exitedAt
     )
     .filter(isValidUnixTimestamp);
 
@@ -269,8 +269,7 @@ function compactDuration(duration: string): string {
   }
 
   const [, days, hours, minutes] = match;
-  const totalSeconds =
-    Number(days ?? 0) * 24 * 60 * 60 +
+  const totalSeconds = Number(days ?? 0) * 24 * 60 * 60 +
     Number(hours ?? 0) * 60 * 60 +
     Number(minutes ?? 0) * 60;
 

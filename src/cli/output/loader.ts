@@ -42,7 +42,9 @@ export function startLoader(
             stripAnsi(line.text) === "Checking health"
           ) {
             console.log(
-              `    ${line.text.replace("Checking health", "Healthcheck timeout")}`,
+              `    ${
+                line.text.replace("Checking health", "Healthcheck timeout")
+              }`,
             );
           }
         }
@@ -66,14 +68,13 @@ export function startLoader(
       output.push(`\x1b[${renderedRowCount}A\r\x1b[J`);
     }
 
-    const renderedLines =
-      lines.length > 0
-        ? lines.map((line) =>
-            line.active
-              ? `${frame} ${line.indent}${line.text}...`
-              : `  ${line.indent}${line.text}`,
-          )
-        : [`${frame} ${label}...`];
+    const renderedLines = lines.length > 0
+      ? lines.map((line) =>
+        line.active
+          ? `${frame} ${line.indent}${line.text}...`
+          : `  ${line.indent}${line.text}`
+      )
+      : [`${frame} ${label}...`];
 
     for (const line of renderedLines) {
       output.push(`\r\x1b[K${line}\n`);

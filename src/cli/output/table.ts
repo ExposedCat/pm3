@@ -22,7 +22,7 @@ export function formatTable(
             options.formatCell?.({ header: rows[0]?.[index], value }) ?? value,
         )
         .join("  ")
-        .trimEnd(),
+        .trimEnd()
     )
     .join("\n");
 }

@@ -77,13 +77,15 @@ export async function getProjectByName(
   return project ? parseProject(project) : undefined;
 }
 
-export type AddProjectInput = Pick<
-  Insertable<ProjectTable>,
-  "name" | "workingDir"
-> & {
-  composeArgs?: readonly string[];
-  git?: boolean;
-};
+export type AddProjectInput =
+  & Pick<
+    Insertable<ProjectTable>,
+    "name" | "workingDir"
+  >
+  & {
+    composeArgs?: readonly string[];
+    git?: boolean;
+  };
 
 export async function addProject(
   db: PM3Database,
