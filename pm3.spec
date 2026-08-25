@@ -1,5 +1,5 @@
 Name:           pm3
-Version:        3.2.0
+Version:        3.2.1
 Release:        1
 Summary:        Container project manager
 
@@ -51,6 +51,22 @@ install -Dm0644 %{SOURCE2} %{buildroot}%{_userunitdir}/pm3.service
 %{_userunitdir}/pm3.service
 
 %changelog
+* Tue Aug 25 2026 Artem Prokop <artem13.prokop@gmail.com> 3.2.1-1
+- feat(cli): confirm all-project commands with yes flag
+  (artem13.prokop@gmail.com)
+- feat(git): report pull progress and commit counts (artem13.prokop@gmail.com)
+- chore(deps): refresh Deno lockfile (artem13.prokop@gmail.com)
+- fix(remove): force remove invalid projects (artem13.prokop@gmail.com)
+- fix(list): isolate invalid project failures (artem13.prokop@gmail.com)
+- fix(cli): distinguish down and invalid state colors
+  (artem13.prokop@gmail.com)
+- feat(git): add project pull configuration command (artem13.prokop@gmail.com)
+- feat(lifecycle): pass compose operation arguments (artem13.prokop@gmail.com)
+- fix(create): report duplicate project names (artem13.prokop@gmail.com)
+- feat(compose): persist podman-compose arguments (artem13.prokop@gmail.com)
+- feat: consolidate project details in view (artem13.prokop@gmail.com)
+- fix: filter compose output by log level (artem13.prokop@gmail.com)
+
 * Mon Jul 20 2026 Artem Prokop <artem13.prokop@gmail.com> 3.2.0-1
 - feat: support custom compose file on create
 
