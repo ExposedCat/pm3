@@ -1,0 +1,7 @@
+services:
+  main:
+    image: docker.io/library/alpine:3.22
+    command: ["sh", "-c", "cat /app/state.txt; exec tail -f /dev/null"]
+    working_dir: /app
+    volumes:
+      - .:/app:ro,Z
