@@ -36,7 +36,10 @@ export const commandDefinitions = [
 
 export type Command = ReturnType<(typeof commandDefinitions)[number]["parse"]>;
 
+type ConfirmAllProjects = (question: string) => boolean | Promise<boolean>;
+
 export type RunCommandOptions = {
+  confirmAllProjects?: ConfirmAllProjects;
   databasePath?: string;
   detachSignal?: AbortSignal;
   launchDetachedLifecycle?: (command: DetachedLifecycleLaunch) => Promise<void>;
@@ -44,6 +47,7 @@ export type RunCommandOptions = {
   runProcess?: RunProcess;
   signal?: AbortSignal;
   verbose?: boolean;
+  yes?: boolean;
 };
 
 export type DetachedLifecycleLaunch = {
@@ -67,14 +71,15 @@ export type CommandDefinition<TCommand extends CliCommand = CliCommand> = {
 export type ParsedCommand = {
   command: Command;
   verbose: boolean;
+  yes: boolean;
 };
 
 export function parseArgs(args: string[]): ParsedCommand {
-  const { commandArgs, verbose } = parseGlobalOptions(args);
+  const { commandArgs, verbose, yes } = parseGlobalOptions(args);
   const [commandName, ...rest] = commandArgs;
 
   if (!commandName) {
-    return { command: helpCommand.parse([]), verbose };
+    return { command: helpCommand.parse([]), verbose, yes };
   }
 
   const definition = commandDefinitions.find((command) =>
@@ -84,15 +89,19 @@ export function parseArgs(args: string[]): ParsedCommand {
     throw usageError(`Unknown command: ${commandName}`);
   }
 
-  return { command: definition.parse(rest), verbose };
+  return { command: definition.parse(rest), verbose, yes };
 }
 
 export async function runCommand(
   parsedCommand: ParsedCommand,
   options: RunCommandOptions = {},
 ): Promise<void> {
-  const { command, verbose } = parsedCommand;
-  await command.run({ ...options, verbose: options.verbose ?? verbose });
+  const { command, verbose, yes } = parsedCommand;
+  await command.run({
+    ...options,
+    verbose: options.verbose ?? verbose,
+    yes: options.yes ?? yes,
+  });
 }
 
 type MissingProjectMessage = string | ((name: string) => string);
@@ -123,12 +132,14 @@ export async function withNamedProject<T>(
 
 export async function withTargetProjects<T>(
   options: RunCommandOptions,
+  command: string,
   name: string | undefined,
   callback: (db: PM3Database, project: Project) => Promise<T>,
   missingMessage?: MissingProjectMessage,
-): Promise<T[]> {
+): Promise<T[] | undefined> {
   return await withTargetProjectList(
     options,
+    command,
     name,
     async (db, projects) => {
       const results: T[] = [];
@@ -144,11 +155,12 @@ export async function withTargetProjects<T>(
 
 export async function withTargetProjectList<T>(
   options: RunCommandOptions,
+  command: string,
   name: string | undefined,
   callback: (db: PM3Database, projects: readonly Project[]) => Promise<T>,
   missingMessage: MissingProjectMessage = (projectName) =>
     `Project not found: ${projectName}`,
-): Promise<T> {
+): Promise<T | undefined> {
   const { getProjectByName, listProjects } = await import(
     "../database/projects.ts"
   );
@@ -173,19 +185,37 @@ export async function withTargetProjectList<T>(
       throw inputError("No projects registered.");
     }
 
+    const confirmAllProjects = options.confirmAllProjects ?? promptAllProjects;
+    const confirmed =
+      options.yes ||
+      (await confirmAllProjects(
+        `Are you sure to execute '${command}' on ${projects.length} projects? [Y/n]`,
+      ));
+    if (!confirmed) {
+      console.log("Aborted");
+      return undefined;
+    }
+
     return await callback(db, projects);
   });
+}
+
+function promptAllProjects(question: string): boolean {
+  const answer = prompt(question);
+  return answer === "y" || answer === "Y";
 }
 
 type GlobalOptionsResult = {
   commandArgs: string[];
   verbose: boolean;
+  yes: boolean;
 };
 
 function parseGlobalOptions(args: readonly string[]): GlobalOptionsResult {
   const commandArgs: string[] = [];
   let passthrough = false;
   let verbose = false;
+  let yes = false;
 
   for (const arg of args) {
     if (arg === "--") {
@@ -199,8 +229,13 @@ function parseGlobalOptions(args: readonly string[]): GlobalOptionsResult {
       continue;
     }
 
+    if (!passthrough && (arg === "-y" || arg === "--yes")) {
+      yes = true;
+      continue;
+    }
+
     commandArgs.push(arg);
   }
 
-  return { commandArgs, verbose };
+  return { commandArgs, verbose, yes };
 }

@@ -55,12 +55,17 @@ async function runDisableCommand(
   const { disableProject } = await import("../../database/projects.ts");
   const { stopProject } = await import("../../runtime/project.ts");
 
-  await withTargetProjects(options, command.name, async (db, project) => {
-    await disableProject(db, project.id);
-    console.log(`Disabled ${project.name}`);
+  await withTargetProjects(
+    options,
+    "disable",
+    command.name,
+    async (db, project) => {
+      await disableProject(db, project.id);
+      console.log(`Disabled ${project.name}`);
 
-    if (command.now) {
-      await stopProject(project, options);
-    }
-  });
+      if (command.now) {
+        await stopProject(project, options);
+      }
+    },
+  );
 }

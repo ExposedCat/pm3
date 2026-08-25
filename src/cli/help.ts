@@ -19,6 +19,7 @@ function formatCommandUsage(command: CommandDefinition): string {
     command.names[0],
     ...command.args,
     "[-v|--verbose]",
+    "[-y|--yes]",
     ...(command.options ?? []),
   ].join(" ");
 }

@@ -117,9 +117,14 @@ async function runLogsCommand(
 ): Promise<void> {
   const { streamProjectLogs } = await import("../../runtime/project.ts");
 
-  await withTargetProjectList(options, command.name, async (_db, projects) => {
-    await Promise.all(
-      projects.map((project) => streamProjectLogs(project, command, options)),
-    );
-  });
+  await withTargetProjectList(
+    options,
+    "logs",
+    command.name,
+    async (_db, projects) => {
+      await Promise.all(
+        projects.map((project) => streamProjectLogs(project, command, options)),
+      );
+    },
+  );
 }

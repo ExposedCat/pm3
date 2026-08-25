@@ -61,6 +61,7 @@ async function runRemoveCommand(
 
   await withTargetProjectList(
     options,
+    "remove",
     command.name,
     async (db, projects) => {
       if (!command.force) {

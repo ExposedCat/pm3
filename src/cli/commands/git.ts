@@ -57,21 +57,26 @@ async function runGitCommand(
 ): Promise<void> {
   const { setProjectGit } = await import("../../database/projects.ts");
 
-  await withTargetProjectList(options, command.name, async (db, projects) => {
-    if (command.mode === "on") {
-      const { requireProjectGitRepository } = await import(
-        "../../runtime/git.ts"
-      );
-      for (const project of projects) {
-        await requireProjectGitRepository(project, options);
+  await withTargetProjectList(
+    options,
+    "git",
+    command.name,
+    async (db, projects) => {
+      if (command.mode === "on") {
+        const { requireProjectGitRepository } = await import(
+          "../../runtime/git.ts"
+        );
+        for (const project of projects) {
+          await requireProjectGitRepository(project, options);
+        }
       }
-    }
 
-    for (const project of projects) {
-      await setProjectGit(db, project.id, command.mode === "on");
-      console.log(
-        `Git pulling ${command.mode === "on" ? "enabled" : "disabled"} for ${project.name}`,
-      );
-    }
-  });
+      for (const project of projects) {
+        await setProjectGit(db, project.id, command.mode === "on");
+        console.log(
+          `Git pulling ${command.mode === "on" ? "enabled" : "disabled"} for ${project.name}`,
+        );
+      }
+    },
+  );
 }

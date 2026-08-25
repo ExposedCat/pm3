@@ -55,14 +55,19 @@ async function runEnableCommand(
   const { enableProject } = await import("../../database/projects.ts");
   const { startProject } = await import("../../runtime/project.ts");
 
-  await withTargetProjectList(options, command.name, async (db, projects) => {
-    for (const project of projects) {
-      await enableProject(db, project.id);
-      console.log(`Enabled ${project.name}`);
+  await withTargetProjectList(
+    options,
+    "enable",
+    command.name,
+    async (db, projects) => {
+      for (const project of projects) {
+        await enableProject(db, project.id);
+        console.log(`Enabled ${project.name}`);
 
-      if (command.now) {
-        await startProject(project, options);
+        if (command.now) {
+          await startProject(project, options);
+        }
       }
-    }
-  });
+    },
+  );
 }

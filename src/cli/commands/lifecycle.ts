@@ -236,12 +236,17 @@ async function runLifecycleCommand(
   command: LifecycleRunCommand,
   options: RunCommandOptions,
 ): Promise<void> {
-  await withTargetProjectList(options, command.name, async (_db, projects) => {
-    const gitPulled = await pullBulkLifecycleGit(command, projects, options);
-    for (const project of projects) {
-      await runProjectLifecycle(command, project, options, { gitPulled });
-    }
-  });
+  await withTargetProjectList(
+    options,
+    command.kind,
+    command.name,
+    async (_db, projects) => {
+      const gitPulled = await pullBulkLifecycleGit(command, projects, options);
+      for (const project of projects) {
+        await runProjectLifecycle(command, project, options, { gitPulled });
+      }
+    },
+  );
 }
 
 type LifecycleTargetProject = {

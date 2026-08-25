@@ -42,9 +42,11 @@ async function runViewCommand(
 ): Promise<void> {
   const loader = startLoader(
     name ? `Loading ${name}` : "Loading project details",
-    { enabled: !options.verbose },
+    {
+      enabled: !options.verbose && (name !== undefined || options.yes === true),
+    },
   );
-  let renderedProjects: string[];
+  let renderedProjects: string[] | undefined;
 
   try {
     const [
@@ -60,6 +62,7 @@ async function runViewCommand(
 
     renderedProjects = await withTargetProjectList(
       options,
+      "view",
       name,
       async (_db, projects) =>
         await Promise.all(
@@ -132,6 +135,10 @@ async function runViewCommand(
     );
   } finally {
     loader.stop();
+  }
+
+  if (!renderedProjects) {
+    return;
   }
 
   console.log(renderedProjects.join("\n\n"));
