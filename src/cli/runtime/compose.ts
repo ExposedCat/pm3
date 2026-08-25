@@ -19,6 +19,7 @@ import {
   PODMAN_COMMAND,
   PODMAN_COMPOSE_COMMAND,
 } from "./compose_files.ts";
+import { pullMissingComposeImages } from "./compose_images.ts";
 import {
   type ComposeProgress,
   createEmptyComposeProgress,
@@ -71,6 +72,9 @@ export async function runProjectCompose(
     (!options.runProcess || options.runLineStream);
   const { runSystemProcess } = await import("./process.ts");
   const runProcess = options.runProcess ?? runSystemProcess;
+  if (operation === "Starting") {
+    await pullMissingComposeImages(project, options, runProcess);
+  }
   const startupTracker = canAbortUnhealthy
     ? await createComposeStartupTracker(project, runProcess)
     : undefined;

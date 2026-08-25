@@ -31,8 +31,8 @@ type CliSignals = {
 function createCliSignals(): CliSignals {
   const interruptController = new AbortController();
   const detachController = new AbortController();
-  const disposeController = new AbortController();
   const abort = () => interruptController.abort();
+  const detach = () => detachController.abort();
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     Deno.addSignalListener(signal, abort);
@@ -42,18 +42,12 @@ function createCliSignals(): CliSignals {
       { once: true },
     );
   }
-
-  const stdinClosed = watchStdinClosed(
-    detachController,
-    disposeController.signal,
-  );
+  Deno.addSignalListener("SIGHUP", detach);
 
   return {
     detachSignal: detachController.signal,
     signal: interruptController.signal,
     async dispose() {
-      disposeController.abort();
-      await stdinClosed;
       for (const signal of ["SIGINT", "SIGTERM"] as const) {
         try {
           Deno.removeSignalListener(signal, abort);
@@ -61,57 +55,11 @@ function createCliSignals(): CliSignals {
           // The listener may already be removed after an interrupt.
         }
       }
+      try {
+        Deno.removeSignalListener("SIGHUP", detach);
+      } catch {
+        // The listener may already be removed after a hangup.
+      }
     },
   };
-}
-
-async function watchStdinClosed(
-  detachController: AbortController,
-  disposeSignal: AbortSignal,
-): Promise<void> {
-  if (!Deno.stdin.isTerminal()) {
-    return;
-  }
-
-  const reader = Deno.stdin.readable.getReader();
-  try {
-    while (!disposeSignal.aborted) {
-      const result = await readStdin(reader, disposeSignal);
-      if (!result) {
-        return;
-      }
-
-      if (result.done) {
-        detachController.abort();
-        return;
-      }
-    }
-  } catch {
-    // Stdin can disappear when the parent terminal closes.
-    detachController.abort();
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-function readStdin(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  disposeSignal: AbortSignal,
-): Promise<ReadableStreamReadResult<Uint8Array> | undefined> {
-  if (disposeSignal.aborted) {
-    return Promise.resolve(undefined);
-  }
-
-  return Promise.race([
-    reader.read(),
-    new Promise<undefined>((resolve) => {
-      disposeSignal.addEventListener(
-        "abort",
-        () => {
-          void reader.cancel().finally(() => resolve(undefined));
-        },
-        { once: true },
-      );
-    }),
-  ]);
 }

@@ -1,0 +1,3 @@
+services:
+  hello:
+    image: library/hello-world:latest

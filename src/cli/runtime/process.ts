@@ -7,6 +7,7 @@ export type ProcessCommand = {
   captureOutput?: boolean;
   detachSignal?: AbortSignal;
   detached?: boolean;
+  interactive?: boolean;
   onOutput?: (chunk: ProcessOutputChunk) => void;
   signal?: AbortSignal;
   verbose?: boolean;
@@ -29,12 +30,18 @@ export type RunProcess = (command: ProcessCommand) => Promise<ProcessResult>;
 export async function runSystemProcess(
   command: ProcessCommand,
 ): Promise<ProcessResult> {
+  const interactive =
+    command.interactive &&
+    !command.detached &&
+    Deno.stdin.isTerminal() &&
+    Deno.stdout.isTerminal() &&
+    Deno.stderr.isTerminal();
   const process = new Deno.Command(command.command, {
     args: [...command.args],
     cwd: command.cwd,
-    stdin: "null",
-    stdout: command.detached ? "null" : "piped",
-    stderr: command.detached ? "null" : "piped",
+    stdin: interactive ? "inherit" : "null",
+    stdout: command.detached ? "null" : interactive ? "inherit" : "piped",
+    stderr: command.detached ? "null" : interactive ? "inherit" : "piped",
   });
 
   const child = process.spawn();
@@ -50,6 +57,12 @@ export async function runSystemProcess(
     child.unref();
     command.signal?.removeEventListener("abort", abort);
     return { code: 0 };
+  }
+  if (interactive) {
+    const status = await child.status.finally(() => {
+      command.signal?.removeEventListener("abort", abort);
+    });
+    return { code: status.code };
   }
   const detach = () => child.unref();
   command.detachSignal?.addEventListener("abort", detach, { once: true });
