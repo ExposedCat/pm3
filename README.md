@@ -54,4 +54,7 @@ pm3 restart website
 pm3 stop website
 pm3 logs website api worker
 pm3 rm website
+pm3 daemon start
+pm3 daemon logs --since 1h --lines 200
+pm3 daemon stop
 ```
