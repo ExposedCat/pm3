@@ -1,7 +1,8 @@
-import { assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { closeDatabase, createDatabase } from "../../database/database.ts";
 import { addProject } from "../../database/projects.ts";
 import { parseArgs, runCommand } from "../commands.ts";
+import { formatProjectState, type ProjectListContainer } from "./list.ts";
 
 Deno.test("list renders a failed project as invalid", async () => {
   const directory = await Deno.makeTempDir();
@@ -49,4 +50,33 @@ Deno.test("list renders a failed project as invalid", async () => {
   } finally {
     await Deno.remove(directory, { recursive: true });
   }
+});
+
+Deno.test("list state ignores completed one-shot containers", () => {
+  const container = (
+    state: string,
+    exitCode = 0,
+  ): ProjectListContainer => ({
+    createdAt: 0,
+    exitCode,
+    exitedAt: 0,
+    ports: "",
+    service: state,
+    startedAt: 0,
+    state,
+    status: "",
+  });
+  const stateOf = (containers: ProjectListContainer[]) =>
+    formatProjectState(containers, { detailed: false }).state;
+
+  assertEquals(stateOf([container("running"), container("exited")]), "up");
+  assertEquals(
+    stateOf([container("running"), container("exited", 1)]),
+    "degraded",
+  );
+  assertEquals(stateOf([container("exited"), container("exited")]), "down");
+  assertEquals(
+    stateOf([container("running"), container("stopping")]),
+    "stopping",
+  );
 });

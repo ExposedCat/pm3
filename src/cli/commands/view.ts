@@ -260,13 +260,15 @@ function formatStartupValue(startup: string): string {
 }
 
 function formatStateDot(state: string): string {
-  const kind = state.match(/^(down|invalid|starting|stopping|up)(?:\s|$)/)?.[1];
+  const kind = state.match(
+    /^(degraded|down|invalid|starting|stopping|up)(?:\s|$)/,
+  )?.[1];
 
   if (kind === "down") {
     return orange("●");
   }
 
-  if (kind === "invalid") {
+  if (kind === "degraded" || kind === "invalid") {
     return red("●");
   }
 

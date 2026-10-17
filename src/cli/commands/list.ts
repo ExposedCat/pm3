@@ -13,6 +13,7 @@ export type ListCommand = CliCommand<"list"> & {
 
 export type ProjectListContainer = {
   createdAt: number;
+  exitCode: number;
   exitedAt: number;
   ports: string;
   service: string;
@@ -139,9 +140,13 @@ export function formatProjectState(
   };
 }
 
+type ProjectState = "degraded" | "down" | "starting" | "stopping" | "up";
+
+// Containers that exited with code 0 alongside running ones are completed
+// one-shot jobs (migrations, init scripts) and don't affect the project state.
 function getProjectState(
-  containers: readonly Pick<ProjectListContainer, "state">[],
-): "down" | "starting" | "stopping" | "up" {
+  containers: readonly Pick<ProjectListContainer, "exitCode" | "state">[],
+): ProjectState {
   if (containers.length === 0) {
     return "down";
   }
@@ -164,21 +169,32 @@ function getProjectState(
     return "starting";
   }
 
+  if (states.every((state) => state === "running" || state === "exited")) {
+    return containers.every((container, index) =>
+        states[index] === "running" || container.exitCode === 0
+      )
+      ? "up"
+      : "degraded";
+  }
+
   return "stopping";
 }
 
 function getProjectStateDuration(
   containers: readonly Pick<
     ProjectListContainer,
-    "exitedAt" | "startedAt" | "status"
+    "exitedAt" | "startedAt" | "state" | "status"
   >[],
-  state: "down" | "starting" | "stopping" | "up",
+  state: ProjectState,
 ): string {
-  if (state === "starting" || state === "stopping") {
+  if (state !== "down" && state !== "up") {
     return "";
   }
 
   const timestamps = containers
+    .filter((container) =>
+      state === "down" || container.state.toLowerCase() === "running"
+    )
     .map((container) =>
       state === "up" ? container.startedAt : container.exitedAt
     )
@@ -327,14 +343,14 @@ export function formatListCell(cell: {
   const content = match?.[1] ?? cell.value;
   const padding = match?.[2] ?? "";
   const state = content.match(
-    /^(down|invalid|starting|stopping|up)(?:\s|$)/,
+    /^(degraded|down|invalid|starting|stopping|up)(?:\s|$)/,
   )?.[1];
 
   if (state === "down") {
     return `${orange(content)}${padding}`;
   }
 
-  if (state === "invalid") {
+  if (state === "degraded" || state === "invalid") {
     return `${red(content)}${padding}`;
   }
 

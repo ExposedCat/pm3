@@ -13,6 +13,7 @@ export type ProjectComposeContainer = {
   createdAt: number;
   startedAt: number;
   exitedAt: number;
+  exitCode: number;
   ports: string;
 };
 
@@ -25,6 +26,7 @@ type PodmanComposeContainer = {
   Created?: number;
   StartedAt?: number;
   ExitedAt?: number;
+  ExitCode?: number;
   Ports?: string | readonly PodmanComposePort[] | null;
 };
 
@@ -55,6 +57,7 @@ export function parseComposeContainerJson(
     createdAt: container.Created ?? 0,
     startedAt: container.StartedAt ?? 0,
     exitedAt: container.ExitedAt ?? 0,
+    exitCode: container.ExitCode ?? 0,
     ports: formatPorts(container.Ports),
   }));
 }
