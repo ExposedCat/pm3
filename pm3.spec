@@ -1,5 +1,5 @@
 Name:           pm3
-Version:        3.2.3
+Version:        4.0.0
 Release:        1
 Summary:        Container project manager
 
@@ -51,6 +51,16 @@ install -Dm0644 %{SOURCE2} %{buildroot}%{_userunitdir}/pm3.service
 %{_userunitdir}/pm3.service
 
 %changelog
+* Sun Oct 18 2026 Artem Prokop <artem13.prokop@gmail.com> 4.0.0-1
+- ci: build without --locked so tito's Cargo.toml version bump doesn't fail
+  releases (artem13.prokop@gmail.com)
+- fix(process): kill whole process groups on cancel and complete already-
+  stopped services in progress, add e2e suite (artem13.prokop@gmail.com)
+- refactor: rewrite CLI and daemon from Deno TypeScript to Rust
+  (artem13.prokop@gmail.com)
+- feat(list): add degraded project state and ignore completed one-shot
+  containers (artem13.prokop@gmail.com)
+
 * Tue Aug 25 2026 Artem Prokop <artem13.prokop@gmail.com> 3.2.3-1
 - fix(build): replace Biome with Deno tooling (artem13.prokop@gmail.com)
 
