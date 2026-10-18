@@ -39,10 +39,10 @@ jobs:
         run: cargo fmt --check
 
       - name: Lint
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test
 
   release:
     name: Build and release
@@ -77,7 +77,7 @@ jobs:
       - name: Build static binary
         if: steps.package.outputs.changed == 'true'
         run: |
-          cargo build --release --locked --target "$RELEASE_TARGET"
+          cargo build --release --target "$RELEASE_TARGET"
           install -Dm0755 "target/$RELEASE_TARGET/release/pm3" dist/pm3
           dist/pm3 help
 
