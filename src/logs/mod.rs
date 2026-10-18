@@ -235,7 +235,7 @@ async fn stop_processes(children: impl IntoIterator<Item = &mut Child>) -> Optio
         let status = match tokio::time::timeout(STOP_GRACE, child.wait()).await {
             Ok(status) => status.ok(),
             Err(_) => {
-                let _ = child.start_kill();
+                process::kill(child);
                 child.wait().await.ok()
             }
         };

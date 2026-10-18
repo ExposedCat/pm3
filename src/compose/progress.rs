@@ -327,6 +327,22 @@ impl Progress {
         self.match_order.iter().find(|service| line.contains(&format!("_{service}_"))).cloned()
     }
 
+    /// After a successful stop or removal: finishes services that were already stopped or gone,
+    /// since podman emits no events for them.
+    pub fn complete(&mut self, containers: &[Container], loader: &Loader) {
+        for service in self.services.clone() {
+            let mut own = containers.iter().filter(|container| container.service == service);
+            let done = match self.operation {
+                Operation::Stopping => own.all(|container| !container.is_running()),
+                Operation::Removing => own.next().is_none(),
+                Operation::Starting | Operation::Building => false,
+            };
+            if done {
+                self.finish_service(&service, loader);
+            }
+        }
+    }
+
     /// Called once the compose command exited: finishes services that are already running
     /// without having emitted a start event, and opens health tracking where needed.
     pub fn seed(&mut self, containers: &[Container], loader: &Loader) {
@@ -600,6 +616,28 @@ mod tests {
         let effect = progress.on_event(&event("health_status", "db", Some("healthy")), &loader).unwrap();
         assert_eq!(effect.health_change, None);
         assert!(progress.on_event(&event("start", "unknown", None), &loader).is_none());
+    }
+
+    #[test]
+    fn completes_services_that_needed_no_work() {
+        let loader = Loader::silent();
+        let mut progress =
+            Progress::new("app", Operation::Removing, vec!["web".to_owned(), "db".to_owned()], HashMap::new(), &loader);
+        let mut db = crate::compose::containers::parse_containers(
+            r#"[{"Id":"x","State":"exited","Labels":{"io.podman.compose.service":"db"}}]"#,
+        )
+        .unwrap();
+        progress.complete(&db, &loader);
+        assert!(progress.finished.contains("web"));
+        assert!(!progress.finished.contains("db"));
+
+        let mut stopping = Progress::new("app", Operation::Stopping, vec!["db".to_owned()], HashMap::new(), &loader);
+        stopping.complete(&db, &loader);
+        assert!(stopping.finished.contains("db"));
+        db[0].state = "running".to_owned();
+        let mut stopping = Progress::new("app", Operation::Stopping, vec!["db".to_owned()], HashMap::new(), &loader);
+        stopping.complete(&db, &loader);
+        assert!(!stopping.finished.contains("db"));
     }
 
     #[test]

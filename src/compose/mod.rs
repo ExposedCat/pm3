@@ -709,6 +709,10 @@ async fn execute(
     }
 
     let interrupted = options.cancellable && ctx.cancel.is_cancelled();
+    if let (Some(progress), false, Some(0)) = (progress.as_mut(), operation.tracks_health(), status) {
+        let containers = project_containers(project).await.unwrap_or_default();
+        progress.complete(&containers, &loader);
+    }
     if let (Some(progress), true, false) = (progress.as_mut(), operation.tracks_health(), interrupted) {
         let containers = project_containers(project).await.unwrap_or_default();
         progress.seed(&containers, &loader);

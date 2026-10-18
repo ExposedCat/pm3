@@ -56,7 +56,15 @@ where
     command
 }
 
+/// Spawns the command as the leader of a new process group, so signals reach everything it
+/// starts (e.g. a `podman` wrapper script and the process it forwards to).
 pub fn spawn(command: &mut Command) -> Result<Child> {
+    command.process_group(0);
+    spawn_in_group(command)
+}
+
+/// Spawns without a new process group: for commands that read the terminal or start a session.
+fn spawn_in_group(command: &mut Command) -> Result<Child> {
     command.spawn().map_err(|error| spawn_error(command, &error))
 }
 
@@ -76,10 +84,22 @@ pub fn exit_code(status: ExitStatus) -> i32 {
 }
 
 pub fn terminate(child: &Child) {
+    signal(child, libc::SIGTERM);
+}
+
+pub fn kill(child: &Child) {
+    signal(child, libc::SIGKILL);
+}
+
+/// Signals the child's process group, or just the child when it doesn't lead one.
+fn signal(child: &Child, signal: libc::c_int) {
     if let Some(pid) = child.id() {
-        // SAFETY: sending a signal to our own child process id has no memory-safety implications.
+        let pid = pid as libc::pid_t;
+        // SAFETY: sending signals to our own child (group) has no memory-safety implications.
         unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+            if libc::kill(-pid, signal) != 0 {
+                libc::kill(pid, signal);
+            }
         }
     }
 }
@@ -94,7 +114,7 @@ pub async fn wait_cancellable(child: &mut Child, cancel: Option<&CancellationTok
         if let Ok(status) = tokio::time::timeout(KILL_GRACE, child.wait()).await {
             return Ok(status?);
         }
-        let _ = child.start_kill();
+        kill(child);
     }
     Ok(child.wait().await?)
 }
@@ -133,7 +153,7 @@ async fn read_all(stream: Option<impl AsyncRead + Unpin>) -> String {
 /// Runs a command with inherited stdio, so it can prompt the user.
 pub async fn run_interactive(mut command: Command, cancel: Option<&CancellationToken>) -> Result<Output> {
     command.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    let mut child = spawn(&mut command)?;
+    let mut child = spawn_in_group(&mut command)?;
     let status = wait_cancellable(&mut child, cancel).await?;
     Ok(Output { code: exit_code(status), ..Output::default() })
 }
@@ -182,7 +202,7 @@ pub fn spawn_detached(mut command: Command) -> Result<()> {
             Ok(())
         });
     }
-    let mut child = spawn(&mut command)?;
+    let mut child = spawn_in_group(&mut command)?;
     tokio::spawn(async move {
         let _ = child.wait().await;
     });
@@ -285,7 +305,7 @@ impl LineStream {
     pub async fn stop(mut self) {
         terminate(&self.child);
         if tokio::time::timeout(STOP_GRACE, self.child.wait()).await.is_err() {
-            let _ = self.child.start_kill();
+            kill(&self.child);
             let _ = tokio::time::timeout(STOP_GRACE, self.child.wait()).await;
         }
     }
@@ -352,6 +372,23 @@ mod tests {
     async fn children_ignore_hangups() {
         let output = capture(command("sh", ["-c", "kill -HUP $$; echo alive"], None), None).await.unwrap();
         assert_eq!(output.stdout, "alive");
+    }
+
+    #[tokio::test]
+    async fn cancellation_reaches_grandchildren() {
+        let cancel = CancellationToken::new();
+        let marker = std::env::temp_dir().join(format!("pm3-grandchild-{}", std::process::id()));
+        let script = format!("sh -c 'sleep 30; touch {}' & wait", marker.display());
+        let task = {
+            let cancel = cancel.clone();
+            tokio::spawn(async move { capture(command("sh", ["-c", &script], None), Some(&cancel)).await })
+        };
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        cancel.cancel();
+        task.await.unwrap().unwrap();
+        let grandchildren =
+            std::process::Command::new("pgrep").args(["-f", &format!("touch {}", marker.display())]).output().unwrap();
+        assert!(grandchildren.stdout.is_empty(), "grandchild survived cancellation");
     }
 
     #[tokio::test]
