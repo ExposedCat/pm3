@@ -1,3 +1,4 @@
 data/pm3.sqlite*
 dist/
+target/
 .codex

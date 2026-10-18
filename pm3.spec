@@ -20,13 +20,13 @@ ExclusiveArch:  x86_64
 %{!?_userunitdir:%global _userunitdir %{_prefix}/lib/systemd/user}
 
 %description
-pm3 is a Deno-based CLI for managing container compose projects.
+pm3 is a CLI for managing container compose projects, written in Rust.
 
 %prep
 %autosetup -n %{name}-%{version}
 
 %build
-# The release binary is built by CI with Deno before the RPM build starts.
+# The static release binary is built by CI with Cargo before the RPM build starts.
 
 %check
 # Tests run in CI before the release binary is published.

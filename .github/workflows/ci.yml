@@ -14,6 +14,10 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TARGET: x86_64-unknown-linux-musl
+
 jobs:
   check:
     name: Check
@@ -23,13 +27,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Deno
-        uses: denoland/setup-deno@v2
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          deno-version: v2.x
+          components: clippy, rustfmt
 
-      - name: Check
-        run: deno task check
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
 
   release:
     name: Build and release
@@ -45,40 +58,44 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Deno
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
       - name: Detect pending release
         id: package
         env:
           FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release }}
         run: ./scripts/detect-pending-release.sh "${{ github.event.before }}" "${{ github.sha }}"
 
-      - name: Install RPM tooling
+      - name: Setup Rust
         if: steps.package.outputs.changed == 'true'
-        run: sudo apt-get update && sudo apt-get install -y rpm
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.RELEASE_TARGET }}
 
-      - name: Build binary
+      - name: Install build tooling
         if: steps.package.outputs.changed == 'true'
-        run: deno task build
+        run: sudo apt-get update && sudo apt-get install -y rpm musl-tools
+
+      - name: Build static binary
+        if: steps.package.outputs.changed == 'true'
+        run: |
+          cargo build --release --locked --target "$RELEASE_TARGET"
+          install -Dm0755 "target/$RELEASE_TARGET/release/pm3" dist/pm3
+          dist/pm3 help
 
       - name: Build RPM
         if: steps.package.outputs.changed == 'true'
         env:
           VERSION: ${{ steps.package.outputs.version }}
-        run: deno task release:build-rpm
+        run: ./scripts/build-rpm.sh
 
       - name: Prepare release assets
         if: steps.package.outputs.changed == 'true'
         env:
           VERSION: ${{ steps.package.outputs.version }}
-        run: deno task release:assets
+        run: ./scripts/prepare-release-assets.sh
 
       - name: Create GitHub release
         if: steps.package.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.package.outputs.version }}
-        run: deno task release:create
+        run: ./scripts/create-release.sh

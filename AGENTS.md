@@ -1,7 +1,7 @@
 # Project description
 
 - podman-based CLI container orchestrator alternative to pm2
-- Deno, SQlite, Kysely
+- Rust, tokio, SQLite (rusqlite)
 
 # Code Requirements
 

@@ -9,17 +9,17 @@ Generate three local Git projects from the repository root:
 Register them with Git pulling enabled:
 
 ```sh
-deno task cli create test-projects/git/generated/no-changes --name git-no-changes --git
-deno task cli create test-projects/git/generated/pulled-commits --name git-pulled-commits --git
-deno task cli create test-projects/git/generated/failed-pull --name git-failed-pull --git
+cargo run -- create test-projects/git/generated/no-changes --name git-no-changes --git
+cargo run -- create test-projects/git/generated/pulled-commits --name git-pulled-commits --git
+cargo run -- create test-projects/git/generated/failed-pull --name git-failed-pull --git
 ```
 
 Run each case:
 
 ```sh
-deno task cli start git-no-changes
-deno task cli start git-pulled-commits
-deno task cli start git-failed-pull
+cargo run -- start git-no-changes
+cargo run -- start git-pulled-commits
+cargo run -- start git-failed-pull
 ```
 
 The expected Git progress results are, in order:

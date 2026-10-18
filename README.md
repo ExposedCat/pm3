@@ -46,6 +46,13 @@ pm3 list --detailed
 
 See [`Wiki`](https://github.com/ExposedCat/pm3/wiki) for full docs.
 
+## Build
+
+```sh
+cargo build --release   # target/release/pm3
+cargo test
+```
+
 ## Common Commands
 
 ```sh

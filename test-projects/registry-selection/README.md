@@ -3,8 +3,8 @@
 Register and start the project from the repository root:
 
 ```sh
-deno task cli create test-projects/registry-selection --name registry-selection
-deno task cli start registry-selection
+cargo run -- create test-projects/registry-selection --name registry-selection
+cargo run -- start registry-selection
 ```
 
 Podman should ask which registry to use for `library/hello-world:latest`.
