@@ -25,14 +25,15 @@ const INGEST_BATCH: usize = 4096;
 const FRAME_INTERVAL: Duration = Duration::from_millis(40);
 const PRODUCER_GRACE: Duration = Duration::from_secs(3);
 const HORIZONTAL_STEP: usize = 8;
-const HELP: [(&str, &str); 12] = [
+const HELP: [(&str, &str); 13] = [
     ("q  Esc  Ctrl-C", "quit"),
     ("↑ ↓  k j  mouse wheel", "scroll by line"),
     ("PgUp PgDn  b space", "scroll by page"),
     ("Ctrl-U  Ctrl-D", "scroll by half a page"),
     ("g  Home", "first line"),
     ("G  End", "newest line, keep following"),
-    ("← →  h l  0", "scroll sideways, back to start"),
+    ("← →  h l  ^", "scroll sideways, back to start"),
+    ("1-9  0", "show only that service, all services"),
     ("/", "search (backward from the newest line while following)"),
     ("n  N", "next match in search direction, opposite direction"),
     ("Enter on empty search", "clear search"),
@@ -209,6 +210,16 @@ impl Spool {
         self.offsets.len()
     }
 
+    /// Spool indices of every line from `target`.
+    fn indices_of(&self, target: usize) -> Vec<usize> {
+        self.targets
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| usize::from(**line) == target)
+            .map(|(index, _)| index)
+            .collect()
+    }
+
     fn push(&mut self, target: usize, text: &str) -> io::Result<()> {
         self.offsets.push(self.written + self.pending.len() as u64);
         self.targets.push(u16::try_from(target).unwrap_or(u16::MAX));
@@ -248,12 +259,18 @@ enum Flow {
     Quit,
 }
 
+/// Scroll positions (`top`, `first_visible`, ...) index the view: every spool line, or only the
+/// lines of the `filter` service through `filtered`. Search matches are spool indices.
 struct Viewer {
     options: PagerOptions,
     spool: Spool,
+    /// Service whose lines are shown alone, full width.
+    filter: Option<usize>,
+    /// Spool indices of the `filter` service's lines.
+    filtered: Vec<usize>,
     width: usize,
     height: usize,
-    /// First visible line while not following.
+    /// First visible view position while not following.
     top: usize,
     /// Pinned to the newest line; turns off when scrolling up, back on at the bottom.
     following: bool,
@@ -276,6 +293,8 @@ impl Viewer {
         Self {
             options,
             spool,
+            filter: None,
+            filtered: Vec::new(),
             width: 80,
             height: 24,
             top: 0,
@@ -301,14 +320,43 @@ impl Viewer {
 
     fn push(&mut self, line: &LogLine) -> Result<()> {
         self.spool.push(line.target, &sanitize(&line.text))?;
-        if !self.following {
+        let visible = self.filter.is_none_or(|target| target == line.target);
+        if visible && self.filter.is_some() {
+            self.filtered.push(self.spool.len() - 1);
+        }
+        if visible && !self.following {
             self.unseen += 1;
         }
         Ok(())
     }
 
+    fn view_len(&self) -> usize {
+        if self.filter.is_some() { self.filtered.len() } else { self.spool.len() }
+    }
+
+    fn spool_index(&self, position: usize) -> usize {
+        if self.filter.is_some() { self.filtered[position] } else { position }
+    }
+
+    /// View position of a spool line, or of the first shown line after it.
+    fn view_position(&self, index: usize) -> usize {
+        if self.filter.is_some() { self.filtered.partition_point(|&shown| shown < index) } else { index }
+    }
+
+    /// Shows only `target`'s lines, or every line for `None`, keeping the first visible line in place.
+    fn set_filter(&mut self, filter: Option<usize>) {
+        let anchor = (!self.following && self.view_len() > 0).then(|| self.spool_index(self.first_visible()));
+        self.filter = filter;
+        self.filtered = filter.map_or_else(Vec::new, |target| self.spool.indices_of(target));
+        self.current_match = None;
+        self.unseen = 0;
+        if let Some(anchor) = anchor {
+            self.top = self.view_position(anchor).min(self.max_top());
+        }
+    }
+
     fn header_rows(&self) -> usize {
-        usize::from(!self.options.flat)
+        usize::from(!self.options.flat || self.filter.is_some())
     }
 
     fn body_rows(&self) -> usize {
@@ -316,7 +364,7 @@ impl Viewer {
     }
 
     fn max_top(&self) -> usize {
-        self.spool.len().saturating_sub(self.body_rows())
+        self.view_len().saturating_sub(self.body_rows())
     }
 
     fn first_visible(&self) -> usize {
@@ -347,10 +395,10 @@ impl Viewer {
         self.unseen = 0;
     }
 
-    fn jump_to(&mut self, index: usize) {
+    fn jump_to(&mut self, position: usize) {
         self.following = false;
         self.unseen = 0;
-        self.top = index.saturating_sub(self.body_rows() / 3).min(self.max_top());
+        self.top = position.saturating_sub(self.body_rows() / 3).min(self.max_top());
     }
 
     fn handle(&mut self, event: Event) -> Flow {
@@ -415,7 +463,14 @@ impl Viewer {
             KeyCode::End | KeyCode::Char('G') => self.follow(),
             KeyCode::Left | KeyCode::Char('h') => self.horizontal = self.horizontal.saturating_sub(HORIZONTAL_STEP),
             KeyCode::Right | KeyCode::Char('l') => self.horizontal += HORIZONTAL_STEP,
-            KeyCode::Char('0') => self.horizontal = 0,
+            KeyCode::Char('^') => self.horizontal = 0,
+            KeyCode::Char('0') => self.set_filter(None),
+            KeyCode::Char(digit @ '1'..='9') => {
+                let target = digit as usize - '1' as usize;
+                if target < self.options.labels.len() {
+                    self.set_filter(if self.filter == Some(target) { None } else { Some(target) });
+                }
+            }
             KeyCode::Char('r') => {
                 let first = self.first_visible();
                 self.options.flat = !self.options.flat;
@@ -438,28 +493,29 @@ impl Viewer {
             self.notice = Some("No search; press / to search".to_owned());
             return;
         };
-        let total = self.spool.len();
+        let total = self.view_len();
         if total == 0 {
             self.notice = Some(format!("Not found: {query}"));
             return;
         }
 
-        let start = match (self.current_match, forward) {
-            (Some(index), true) => index + 1,
-            (Some(index), false) => index + total - 1,
+        let start = match (self.current_match.map(|index| self.view_position(index)), forward) {
+            (Some(position), true) => position + 1,
+            (Some(position), false) => position + total - 1,
             (None, true) => self.first_visible(),
             (None, false) => self.first_visible() + self.body_rows() + total - 1,
         };
         for step in 0..total {
-            let index = if forward { (start + step) % total } else { (start + total - step % total) % total };
+            let position = if forward { (start + step) % total } else { (start + total - step % total) % total };
+            let index = self.spool_index(position);
             let matches =
                 self.spool.get(index).is_ok_and(|(_, text)| strip_ansi(&text).to_lowercase().contains(&query));
             if matches {
-                if forward && index < start % total || !forward && index > start % total {
+                if forward && position < start % total || !forward && position > start % total {
                     self.notice = Some("Search wrapped".to_owned());
                 }
                 self.current_match = Some(index);
-                self.jump_to(index);
+                self.jump_to(position);
                 return;
             }
         }
@@ -473,20 +529,13 @@ impl Viewer {
         let mut row = 1;
 
         let width = column_width(self.options.labels.len(), self.width);
-        if !self.options.flat {
-            let names: Vec<String> = self
-                .options
-                .labels
-                .iter()
-                .enumerate()
-                .map(|(index, label)| format!("\x1b[1m{}", target_color(index)(label)))
-                .collect();
-            self.push_row(&mut frame, row, &slice_visible(&format_row(&names, width), 0, self.width));
+        if let Some(header) = self.header(width) {
+            self.push_row(&mut frame, row, &slice_visible(&header, 0, self.width));
             row += 1;
         }
 
         let first = self.first_visible();
-        let last = (first + self.body_rows()).min(self.spool.len());
+        let last = (first + self.body_rows()).min(self.view_len());
         if self.help {
             for (keys, action) in HELP.iter().take(self.body_rows()) {
                 let line = format!("  \x1b[1m{keys:<24}\x1b[0m {action}");
@@ -494,8 +543,8 @@ impl Viewer {
                 row += 1;
             }
         } else {
-            for index in first..last {
-                let line = self.render_line(index, width)?;
+            for position in first..last {
+                let line = self.render_line(self.spool_index(position), width)?;
                 self.push_row(&mut frame, row, &line);
                 row += 1;
             }
@@ -515,13 +564,42 @@ impl Viewer {
         Ok(())
     }
 
+    /// Numbered service names: column titles, or a tab bar while one service is shown alone.
+    fn header(&self, width: usize) -> Option<String> {
+        let number = |index: usize| if index < 9 { format!("[{}] ", index + 1) } else { String::new() };
+        let labels = self.options.labels.iter().enumerate();
+        match self.filter {
+            Some(active) => {
+                let tabs: String = labels
+                    .map(|(index, label)| {
+                        if index == active {
+                            format!("\x1b[1;7m {}{label} \x1b[0m ", number(index))
+                        } else {
+                            format!(" {}{} ", number(index), target_color(index)(label))
+                        }
+                    })
+                    .collect();
+                Some(format!(" [0] all {tabs}"))
+            }
+            None if !self.options.flat => {
+                let names: Vec<String> = labels
+                    .map(|(index, label)| format!("\x1b[1m{}{}", number(index), target_color(index)(label)))
+                    .collect();
+                Some(format_row(&names, width))
+            }
+            None => None,
+        }
+    }
+
     fn push_row(&self, frame: &mut String, row: usize, content: &str) {
         frame.push_str(&format!("\x1b[{row};1H\x1b[2K{content}\x1b[0m"));
     }
 
     fn render_line(&self, index: usize, width: usize) -> Result<String> {
         let (target, text) = self.spool.get(index)?;
-        let line = if self.options.flat {
+        let line = if self.filter.is_some() {
+            slice_visible(&text, self.horizontal, self.width)
+        } else if self.options.flat {
             let prefix = if self.options.labels.len() > 1 {
                 let label = self.options.labels.get(target).map_or("", String::as_str);
                 format!("{} | ", target_color(target)(label))
@@ -549,7 +627,7 @@ impl Viewer {
             return pad(&format!("/{prompt}\u{2588}"), self.width);
         }
 
-        let total = self.spool.len();
+        let total = self.view_len();
         let position = if total == 0 { "0 lines".to_owned() } else { format!("{}-{last}/{total}", first + 1) };
         let state = match (&self.error, self.loading, self.options.live, self.following) {
             (Some(error), ..) => format!("error: {error}"),
@@ -559,7 +637,11 @@ impl Viewer {
             (None, _, true, false) => "paused".to_owned(),
             (None, false, false, _) => "end".to_owned(),
         };
-        let layout = if self.options.flat { "lines" } else { "columns" };
+        let layout = match self.filter {
+            Some(target) => self.options.labels.get(target).map_or("", String::as_str),
+            None if self.options.flat => "lines",
+            None => "columns",
+        };
         let left = format!(" {} │ {position} │ {state} │ {layout} ", self.options.title);
         let right = self.notice.clone().unwrap_or_else(|| {
             if self.help { "? close help ".to_owned() } else { "/ search  r layout  ? help  q quit ".to_owned() }
@@ -668,6 +750,56 @@ mod tests {
         viewer.search = Some("missing".to_owned());
         viewer.find(true);
         assert_eq!(viewer.notice.as_deref(), Some("Not found: missing"));
+    }
+
+    #[test]
+    fn filters_to_one_service_and_back_keeping_position() {
+        let options = PagerOptions {
+            title: "app".to_owned(),
+            labels: vec!["web".to_owned(), "db".to_owned()],
+            flat: false,
+            live: true,
+        };
+        let mut viewer = Viewer::new(options, Spool::create().unwrap());
+        viewer.resize((40, 6));
+        for index in 0..20 {
+            viewer.push(&LogLine { target: index % 2, text: format!("line {index}") }).unwrap();
+        }
+        let press = |viewer: &mut Viewer, key: char| {
+            viewer.handle(Event::Key(KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE)));
+        };
+
+        press(&mut viewer, '3');
+        assert_eq!(viewer.filter, None, "keys past the last service are ignored");
+        press(&mut viewer, '2');
+        assert_eq!(viewer.filter, Some(1));
+        assert_eq!(viewer.filtered, vec![1, 3, 5, 7, 9, 11, 13, 15, 17, 19]);
+        assert_eq!(viewer.spool_index(viewer.first_visible()), 13);
+
+        viewer.push(&LogLine { target: 0, text: "web".to_owned() }).unwrap();
+        viewer.push(&LogLine { target: 1, text: "db".to_owned() }).unwrap();
+        assert_eq!(viewer.filtered.last(), Some(&21));
+        assert_eq!(viewer.view_len(), 11);
+
+        viewer.scroll_up(4);
+        assert_eq!(viewer.spool_index(viewer.first_visible()), 7);
+        viewer.push(&LogLine { target: 0, text: "hidden".to_owned() }).unwrap();
+        assert_eq!(viewer.unseen, 0, "lines of other services are not counted as new");
+
+        viewer.search = Some("line 1".to_owned());
+        viewer.find(true);
+        assert_eq!(viewer.current_match, Some(11), "search only visits the shown service");
+
+        press(&mut viewer, '0');
+        assert_eq!(viewer.filter, None);
+        assert_eq!(viewer.current_match, None);
+        assert!(!viewer.following);
+        assert_eq!(viewer.first_visible(), 9, "the first line shown before stays first");
+        assert_eq!(viewer.view_len(), 23);
+
+        press(&mut viewer, '1');
+        press(&mut viewer, '1');
+        assert_eq!(viewer.filter, None, "pressing the shown service again shows all");
     }
 
     #[test]
